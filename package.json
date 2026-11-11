@@ -1,0 +1,21 @@
+{
+  "name": "mem",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "个人学习记录站：SQLite 真源 + Node 服务端渲染 + 受控写接口",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "dev": "./dev.sh",
+    "start": "node server/dev.mjs",
+    "test": "./scripts/test.sh",
+    "check": "./scripts/check.sh",
+    "site": "node server/build-site.mjs",
+    "export": "node server/export-cli.mjs"
+  },
+  "dependencies": {
+    "marked": "18.1.3"
+  }
+}

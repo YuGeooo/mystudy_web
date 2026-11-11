@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# 把本机的 API 代码、页面渲染器、样式推到线上 /www/api，重启 mem-api 并做健康检查。
+# 把本机的 API 代码、页面渲染器、样式和第三方依赖推到线上 /www/api，
+# 重启 mem-api 并做健康检查。
 #
-# 同步范围（只这三个，数据与配置不碰）：
+# 同步范围（从不碰数据与配置）：
 #   server/*.mjs        API 与页面服务
-#   web/render/*.mjs    页面渲染器（新架构下页面由这个进程渲染，归本仓库管）
+#   web/render/*.mjs    页面渲染器（页面由这个进程渲染，归本仓库管）
 #   web/assets/app.css  Tailwind 预编译样式
+#   node_modules/       第三方依赖（目前只有 marked，92 KB，打包过去省得服务器跑 npm）
 #
 # 数据（/www/data）与配置（config.local.json、mem-api.env）都在服务器上单独维护，
 # 这里绝不覆盖 —— 配置里带着写接口的开关和 token。
@@ -22,11 +24,18 @@ PKG="/tmp/mem-api-$TS.tar.gz"
 
 cd "$ROOT"
 
+# 依赖没装齐就别打包：否则服务器上会带着一个"缺 marked"的版本上线。
+if [ ! -d node_modules/marked ]; then
+  echo "[api] 本机缺 node_modules/marked —— 先跑 npm ci" >&2
+  exit 1
+fi
+
 # 测试文件留在本机：服务器上没有测试库，传上去只会占地方。
 tar czf "$PKG" \
   --exclude='test-write-api.mjs' --exclude='smoke-test.mjs' \
-  server/*.mjs web/render/*.mjs web/assets/app.css
-echo "[api] 打包 $(tar tzf "$PKG" | grep -cv '/$' || true) 个文件"
+  --exclude='node_modules/.bin' \
+  server/*.mjs web/render/*.mjs web/assets/app.css node_modules
+echo "[api] 打包 $(tar tzf "$PKG" | grep -cv '/$' || true) 个文件（含依赖 $(du -sh node_modules | cut -f1)）"
 
 scp -q $SSH_OPTS "$PKG" "$SERVER:/tmp/mem-api-$TS.tar.gz"
 rm -f "$PKG"
@@ -48,7 +57,8 @@ rm -f "$PKG"
 for f in "$STAGE"/server/*.mjs "$STAGE"/web/render/*.mjs; do
   "$NODE" --check "$f" >/dev/null || { echo "[api] 语法错误：$f" >&2; rm -rf "$STAGE"; exit 1; }
 done
-echo "[api] 语法预检通过（server $(ls -1 "$STAGE"/server/*.mjs | wc -l | tr -d ' ') 个 / render $(ls -1 "$STAGE"/web/render/*.mjs | wc -l | tr -d ' ') 个）"
+[ -d "$STAGE/node_modules/marked" ] || { echo "[api] 包里没有 node_modules/marked" >&2; rm -rf "$STAGE"; exit 1; }
+echo "[api] 预检通过（server $(ls -1 "$STAGE"/server/*.mjs | wc -l | tr -d ' ') 个 / render $(ls -1 "$STAGE"/web/render/*.mjs | wc -l | tr -d ' ') 个 / 依赖就位）"
 
 # ---- 2. 备份旧代码 ----
 mkdir -p .rollback
@@ -56,7 +66,7 @@ if [ -d server ]; then tar czf ".rollback/server-$TS.tar.gz" server; fi
 if [ -d web/render ]; then tar czf ".rollback/web-$TS.tar.gz" web/render; fi
 ls -1t .rollback/server-*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
 
-# ---- 3. 换代码 + 重启 ----
+# ---- 3. 换代码 + 依赖 + 重启 ----
 systemctl stop mem-api.service
 
 rm -rf server.old
@@ -70,9 +80,18 @@ cp "$STAGE"/web/render/*.mjs web/render/
 mkdir -p web/assets
 cp "$STAGE"/web/assets/app.css web/assets/app.css
 
+# 依赖统一放 /www/api/node_modules。旧的那份先挪开，健康检查通过后才删。
+rm -rf node_modules.old
+if [ -d node_modules ]; then mv node_modules node_modules.old; fi
+mv "$STAGE/node_modules" node_modules
+
+# 旧架构遗留：静态构建产物、web 下的依赖副本、macOS 的 AppleDouble 文件。
+# 留着会造成两个隐患：web/node_modules 抢在根依赖之前被解析、.build 占 2.6 MB 却没人读。
+rm -rf web/node_modules web/.build web/._render web/._site.config.json
+
 rm -rf "$STAGE" server.old
-chown -R deploy:deploy server web
-chmod -R u=rwX,go=rX server web
+chown -R deploy:deploy server web node_modules
+chmod -R u=rwX,go=rX server web node_modules
 
 systemctl start mem-api.service
 sleep 3
@@ -97,10 +116,28 @@ if [ -z "$PAGES" ] || [ "$PAGES" -lt 100 ]; then
   exit 1
 fi
 
-# ---- 5. 抽检一个真实页面 ----
+# ---- 5. 依赖自检：marked 必须能从 /www/api 解析到 ----
+if ! "$NODE" -e "import('marked')" >/dev/null 2>&1; then
+  echo "[api] 依赖 marked 无法解析 —— 原文页会全部 500。检查 node_modules 位置。" >&2
+  exit 1
+fi
+
+# ---- 6. 抽检页面：首页 + 一个原文页（唯一走 marked 渲染的页面类型）----
 CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:8137/study/ || echo 000)"
 echo "[api] /study/ → HTTP $CODE"
 [ "$CODE" = "200" ] || { echo "[api] 页面不可用，请检查日志" >&2; exit 1; }
+
+SRC_PATH="$(curl -s --max-time 10 http://127.0.0.1:8137/study/sitemap.xml | grep -o '/study/source/[^<]*' | head -1 || true)"
+if [ -n "$SRC_PATH" ]; then
+  SCODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1:8137${SRC_PATH}" || echo 000)"
+  echo "[api] 原文页抽检 → HTTP $SCODE"
+  [ "$SCODE" = "200" ] || { echo "[api] 原文页不可用，多半是 marked 渲染失败" >&2; exit 1; }
+else
+  echo "[api] sitemap 里没有 source 页，跳过原文页抽检"
+fi
+
+# ---- 7. 一切正常，清掉旧依赖副本 ----
+rm -rf node_modules.old
 
 echo "[api] 完成：$API_DIR @ $TS（页表 $PAGES 页）"
 REMOTE

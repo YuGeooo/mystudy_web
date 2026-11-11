@@ -14,8 +14,8 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
   服务端：`server/dev.mjs`（入口）、`pages.mjs`（内存页表 + 请求处理）、
   `build-site.mjs`（渲染）、`routes.mjs`（分发）、`read-api.mjs` / `write.mjs` / `catalog.mjs`（数据）、
   `export.mjs`（Node 版导出器）、`backup.mjs`（写前快照）。
-- **P1 本地服务**：`./dev.sh` 起 `http://127.0.0.1:8137`，零 npm 依赖
-  （Node 22 自带 `node:http` + `node:sqlite`），数据库只读。
+- **P1 本地服务**：`./dev.sh` 起 `http://127.0.0.1:8137`。零框架，第三方依赖只有一个 `marked`，
+  其余全是 Node 22 标准库（`node:http` + `node:sqlite`），数据库只读。
   端点 `/api/health` / `/api/meta` / `/api/days`；`node server/smoke-test.mjs` 自测 19 项全通过。
   代码在 `server/`，配置在 `config.local.json`。
 - **P2 本地站点**：`http://127.0.0.1:8137/study/`。三份数据契约：`index.json`、
@@ -70,7 +70,8 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
                                     写成功 → 重导 JSON → 重建页表 → 下一次请求就是新页面
 ```
 
-- **一个语言**：Node 22。服务器不引入 Python，也不新增 npm 包（`node:sqlite` 直读 `mem.db`）。
+- **一个语言**：Node 22。服务器不引入 Python；第三方依赖只有一个 `marked`（版本锁在
+  `package-lock.json`），其余全是标准库（`node:sqlite` 直读 `mem.db`）。
 - **页面渲染**：`server/pages.mjs` 在进程内维护一张 `Map<路径, HTML>`。启动渲染一次；
   每次写库成功后重建一次（线上实测 40~162ms）；跨天自动重算「今天/倒计时」。
   请求命中内存直接返回，带 ETag，条件请求走 304。
@@ -86,6 +87,69 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
 - **Python 只做离线工具**：`scripts/*.py` 仅在本机跑迁移 / 导出 / 核对，不进服务器运行时；
   `dev.sh` 启动时会调用 `sync.sh`，这是开发便利而非运行时依赖（`SKIP_SYNC=1` 可跳过）。
 - **安全边界**：服务只监听 `127.0.0.1`，公网暴露由 nginx 承担；写接口三道闸门 + 限流。
+
+## 工程化
+
+### 依赖政策：零框架 + 一个三方依赖
+
+| 框架通常负责的事 | 这里的替代 |
+|---|---|
+| 前端框架（React/Vue/Svelte） | 不用。页面是模板字符串拼出的 HTML，浏览器端 **0 个 JS 文件** |
+| 后端框架（Express/Koa/Fastify） | 不用。`node:http` + `server/routes.mjs` 手写路由分发 |
+| 模板引擎（EJS/Pug） | 不用。模板字面量 + helper 函数 |
+| ORM | 不用。`node:sqlite` + 手写 SQL |
+| 打包器（Vite/Webpack） | 不用。CSS 是预编译好的 `web/assets/app.css` |
+| 唯一三方依赖 | `marked` 18.1.3（92 KB，零子依赖）——试卷 Markdown 转 HTML |
+
+**判断标准**：只有当「客户端交互状态」「多用户认证」「多人同时改前端」三者之一真实出现时，
+才值得引入框架。目前三者都没有，加框架是净负担（省约 500 行、重写 3000 行）。
+
+### 首次安装
+
+```bash
+npm ci                   # 按 package-lock.json 精确安装（只有 marked）
+./scripts/preflight.sh   # 环境自检：Node 版本 / 依赖 / 渲染器能否加载 / 数据文件
+```
+
+`data/mem.db` 是二进制、不入版本库，新机器上要 `./scripts/pull-data.sh` 从线上取回
+（或 `./scripts/restore.sh <备份目录>`）。预检会明确告诉你缺哪一步，而不是让 Node 抛
+`ERR_MODULE_NOT_FOUND`。
+
+### 命令
+
+| 命令 | 作用 |
+|---|---|
+| `npm run dev` | 预检 → 同步 JSON → 起服务（等价 `./dev.sh`） |
+| `npm test` | 全量：预检 → 语法 → 导出等价 → 写接口 108 项 → 只读 19 项 |
+| `npm run check` | 只做语法检查（29 个 `.mjs` + 14 个 `.sh`） |
+| `npm run site` | 静态构建到 `web/.build/`（离线预览与回滚兜底） |
+
+写接口测试全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的
+sha256 + mtime，一致才通过。`SKIP_SMOKE=1 npm test` 可跳过需要 8137 在跑的只读回归。
+
+### 提交钩子
+
+```bash
+./scripts/install-hooks.sh   # 设置 core.hooksPath = scripts/hooks
+```
+
+`pre-commit` 只做三件几秒内能完成的事：改动文件的语法检查、`package.json` 与锁文件是否同步、
+动了写库/渲染代码时提醒跑完整测试。
+
+**刻意不自动跑测试**：pre-commit 里跑的测试用的是已在运行的进程（旧代码），绿是假绿。
+紧急情况 `git commit --no-verify` 可跳过，但请随后补跑。
+
+### 版本约束
+
+`.nvmrc` 写 22；`package.json` 声明 `engines.node >= 22.5`（`node:sqlite` 的门槛）。
+`scripts/preflight.sh` 做硬检查——不满足就拒绝启动，避免"起来了但某些接口莫名报错"。
+
+### 暂不接 CI（原因）
+
+代码托管还没有远程仓库，更重要的是：测试依赖 `data/mem.db`（二进制、不入版本库），
+CI 上没有这份数据就跑不了写接口测试。真要接，得先造一份可以提交的夹具库
+（几十行假数据 + 对应 JSON 契约），让 `test.sh` 能在一台干净机器上自洽运行。
+在那之前，`npm test` 是一道手动关卡，pre-commit 只兜语法与锁文件。
 
 ## 改数据后怎么让站点更新
 

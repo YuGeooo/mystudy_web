@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# 提交前兜底：只做「几秒内能完成」的检查，把明显的问题挡在提交之前。
+#
+# 刻意**不**自动跑测试：pre-commit 里跑的是已在运行的进程（旧代码），
+# 跑出来的绿是假绿。完整测试请手动 ./scripts/test.sh。
+#
+# 紧急情况可用 git commit --no-verify 跳过，但请随后补跑完整测试。
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+[ -n "$STAGED" ] || exit 0
+
+fail=0
+
+# ---- 1. 语法检查：只查本次改动的文件 ----
+while IFS= read -r f; do
+  [ -n "$f" ] && [ -f "$f" ] || continue
+  case "$f" in
+    *.mjs)
+      if ! out=$(node --check "$f" 2>&1); then
+        printf '[pre-commit] 语法错误 %s\n' "$f" >&2
+        # node --check 的输出带空行，过滤掉只留定位行与错误摘要
+        printf '%s\n' "$out" | grep -v '^$' | head -3 | sed 's/^/    /' >&2
+        fail=1
+      fi
+      ;;
+    *.sh)
+      if ! out=$(bash -n "$f" 2>&1); then
+        printf '[pre-commit] 语法错误 %s\n' "$f" >&2
+        printf '%s\n' "$out" | grep -v '^$' | head -3 | sed 's/^/    /' >&2
+        fail=1
+      fi
+      ;;
+  esac
+done <<< "$STAGED"
+
+# ---- 2. 依赖声明与锁文件必须同步 ----
+if grep -qx 'package.json' <<< "$STAGED" && ! grep -qx 'package-lock.json' <<< "$STAGED"; then
+  echo '[pre-commit] 改了 package.json 但没提交 package-lock.json' >&2
+  echo '             跑一次 npm install 让锁文件跟上，否则别人装出来的版本可能不同。' >&2
+  fail=1
+fi
+
+if [ "$fail" -eq 1 ]; then
+  echo '[pre-commit] 修正后用 git add 重新暂存再提交。' >&2
+  exit 1
+fi
+
+# ---- 3. 提醒（不阻止）：动了这些地方值得跑一遍完整测试 ----
+if grep -qE '^(server/(write|catalog|routes|backup|export|pages)|web/render/)' <<< "$STAGED"; then
+  echo '[pre-commit] 提醒：本次改动涉及写库/渲染/导出，建议提交前跑 ./scripts/test.sh'
+fi
+
+exit 0

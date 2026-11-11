@@ -15,9 +15,11 @@ data/test.db-*
 data/test-index.json
 data/test-content.json
 
-# 本地构建产物与第三方依赖副本
+# 第三方依赖：由 package-lock.json 锁定，npm ci 可精确复现
+node_modules/
+
+# 本地静态构建产物（运行时改为内存页表后仅离线预览用）
 web/.build/
-web/node_modules/
 
 # 运行日志
 *.log
