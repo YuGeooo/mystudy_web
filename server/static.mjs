@@ -1,4 +1,8 @@
 // 把 web/.build/ 托管在 /study/ 下。纯 node:fs，无第三方依赖。
+//
+// 注意：线上与本地都已经改走 server/pages.mjs（进程内实时渲染），这个文件不再被路由引用。
+// 保留它是因为静态构建（node server/build-site.mjs → web/.build/）仍然可用，
+// 需要对着磁盘产物做离线预览时还会用到。
 import fs from 'node:fs';
 import path from 'node:path';
 import { BUILD_DIR } from './build-site.mjs';

@@ -8,7 +8,7 @@ Type=simple
 User=deploy
 Group=deploy
 WorkingDirectory=/www/api
-Environment=MEM_BUILD_SITE=0
+# 页面由本进程按请求渲染，页表必须建起来（旧的 MEM_BUILD_SITE=0 已不再适用）
 Environment=NODE_NO_WARNINGS=0
 # 写接口的 token 只放在这里（600 root:root），不进版本库、不进配置文件。
 EnvironmentFile=/www/api/mem-api.env

@@ -1,5 +1,10 @@
-// P2 Node 构建器：三份 JSON → 原来的 parseSession / buildData / renderSite → 静态 HTML。
-// 与站点 index.mjs 的差别只有两点：数据源从 git 换成 content.json，commits 恒为空。
+// 站点渲染：三份 JSON 契约 → 页面。
+//
+// 两种出口，共用同一套解析与聚合：
+//   buildPages() → 内存 Map，运行时按请求出页面用（服务端常驻，写完立刻生效）
+//   buildSite()  → 写盘，静态构建用（release 兜底、本地预览、离线查看）
+//
+// 与站点仓库 index.mjs 的差别只有两点：数据源从 git 换成 content.json，commits 恒为空。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -27,11 +32,23 @@ function countBy(items, keyFn) {
   return out;
 }
 
-export function buildSite() {
-  const config = readJson(path.join(WEB, 'site.config.json'));
-  const volumes = readJson(path.join(DATA, 'volumes.json'));
-  const jsonIndex = readJson(path.join(DATA, 'index.json'));
-  const content = readJson(path.join(DATA, 'content.json'));
+/**
+ * 读契约、解析场次、聚合出渲染所需的全部输入。
+ * 每次调用都是全量重算——库小（几十场、几百条作答），实测远快于一次网络往返。
+ *
+ * paths 可覆盖默认位置：测试进程要读 test-index.json / test-content.json，
+ * 不能把正式契约渲染出来。
+ */
+export function prepare(paths = {}) {
+  const siteConfigFile = paths.siteConfig || path.join(WEB, 'site.config.json');
+  const volumesFile = paths.volumes || path.join(DATA, 'volumes.json');
+  const indexFile = paths.index || path.join(DATA, 'index.json');
+  const contentFile = paths.content || path.join(DATA, 'content.json');
+
+  const config = readJson(siteConfigFile);
+  const volumes = readJson(volumesFile);
+  const jsonIndex = readJson(indexFile);
+  const content = readJson(contentFile);
   const timeZone = config.site?.timezone || 'Asia/Shanghai';
 
   // 卷清单单一数据源：与站点 index.mjs 的派生规则逐字一致。
@@ -123,7 +140,50 @@ export function buildSite() {
     },
   };
 
-  const written = renderSite({ data, config, report, outDir: BUILD_DIR, sources });
+  return {
+    data,
+    config,
+    report,
+    sources,
+    today,
+    timeZone,
+    stats: {
+      sessions: sessions.length,
+      days: data.days.length,
+      volumes: data.volumes.length,
+      warnings: data.warnings.length,
+    },
+  };
+}
+
+/**
+ * 渲染到内存。返回 Map<相对路径, 内容>，一次磁盘写都不发生。
+ * 运行时服务就是靠这个：写完库 → 重建这张表 → 下一次请求立刻是新页面。
+ */
+export function buildPages(paths = {}) {
+  const ctx = prepare(paths);
+  const pages = new Map();
+  renderSite({
+    data: ctx.data,
+    config: ctx.config,
+    report: ctx.report,
+    sources: ctx.sources,
+    outDir: '',
+    emit: (relPath, content) => pages.set(relPath, content),
+  });
+  return { pages, today: ctx.today, stats: ctx.stats };
+}
+
+/** 渲染到磁盘（静态构建）。 */
+export function buildSite(paths = {}) {
+  const ctx = prepare(paths);
+  const written = renderSite({
+    data: ctx.data,
+    config: ctx.config,
+    report: ctx.report,
+    sources: ctx.sources,
+    outDir: BUILD_DIR,
+  });
   // 本地开发用预编译好的 app.css 直接复制；服务器上由 Tailwind 在渲染后编译，源文件不存在时跳过。
   fs.mkdirSync(path.join(BUILD_DIR, 'assets'), { recursive: true });
   const cssSource = path.join(WEB, 'assets', 'app.css');
@@ -133,11 +193,9 @@ export function buildSite() {
 
   return {
     written,
-    warnings: data.warnings,
-    sessions: sessions.length,
-    days: data.days.length,
-    volumes: data.volumes.length,
-    today,
+    warnings: ctx.data.warnings,
+    ...ctx.stats,
+    today: ctx.today,
   };
 }
 

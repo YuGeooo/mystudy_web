@@ -1,6 +1,6 @@
 # mem_new
 
-MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）、线上部署（P4）与写接口（P5）均已跑通，**写接口已在线上开启**（Bearer token + 限流 + 写前自动快照）。线上：<https://geyuqi.me/study/>。
+MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）、线上部署（P4）与写接口（P5）均已跑通，写接口已在线上开启（Bearer token + 限流 + 写前自动快照）。**页面由常驻 Node 进程实时渲染**，写完立刻可见。线上：<https://geyuqi.me/study/>。
 
 ## 当前状态
 
@@ -11,13 +11,16 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
 - 实现：`scripts/schema.sql`（DDL + 索引）、`migrate.py`（一次性只读导入）、
   `export_index.py` / `export_content.py`（数据库 → JSON 契约）、`verify.py`（核对 + 生成报告）、
   `sync.sh`（串联导出）、`verify-loopback.mjs`（闭环验证）。
+  服务端：`server/dev.mjs`（入口）、`pages.mjs`（内存页表 + 请求处理）、
+  `build-site.mjs`（渲染）、`routes.mjs`（分发）、`read-api.mjs` / `write.mjs` / `catalog.mjs`（数据）、
+  `export.mjs`（Node 版导出器）、`backup.mjs`（写前快照）。
 - **P1 本地服务**：`./dev.sh` 起 `http://127.0.0.1:8137`，零 npm 依赖
   （Node 22 自带 `node:http` + `node:sqlite`），数据库只读。
   端点 `/api/health` / `/api/meta` / `/api/days`；`node server/smoke-test.mjs` 自测 19 项全通过。
   代码在 `server/`，配置在 `config.local.json`。
 - **P2 本地站点**：`http://127.0.0.1:8137/study/`。三份数据契约：`index.json`、
   `content.json`（`scripts/export_content.py` 从库里还原 48 份 Markdown 全文）、`volumes.json`。
-  渲染器与样式是 `web/` 下的只读副本，未改站点仓库。启动时自动重建 171 个页面。
+  渲染器与样式是 `web/` 下的副本。**页面按请求在进程内渲染**（171 页常驻内存，首次 74ms）。
   与原构建器同时间点对比：共同 171 个文件，`data.json` 顶层字段一致，0 警告；
   唯一差异是 3 个「纯 git 提交日」页面消失（学习日 27 → 24），符合 `sessions.date` 口径。
 - **P3 闭环**：不实现录入界面（设计 §11 范围外）。已打通「改库 → 同步 JSON → 重建站点」：
@@ -30,9 +33,11 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
   线上细节见 [deploy/README.md](deploy/README.md)；服务器脚本副本在 [deploy/](deploy/)。
 - **P5 已开启**：线上 `mem-api.service` 以写模式运行，写接口需 `Authorization: Bearer <token>`
   （token 存在服务器 `/www/api/mem-api.env`，本机副本 `~/.mem-api-token`）。
-  写成功后自动重导 `index.json` / `content.json`，`geyuqi-deploy.timer` 在 5 分钟内按文件哈希变化重建页面。
+  写成功后自动重导 `index.json` / `content.json`，并在同一进程内重建页表——
+  **响应返回时页面已经是新的**，没有定时任务、没有等待窗口。
   **线上是可写入的那一份真源**，本机用 `./scripts/pull-data.sh` 拉回做副本。
-  站点仓库 `/Users/geyuqi/Documents/aliyun/myWebsite/` **一行未改**，线上仍用它的渲染器与样式。
+  站点仓库 `/Users/geyuqi/Documents/aliyun/myWebsite/` **一行未改**；`web/render/` 是它的副本，
+  唯一的分叉是 `renderSite()` 多了一个 `emit` 参数（支持渲染到内存），默认行为不变。
 - **加固**：本仓库已纳入 git（`data/mem.db` 与导出 JSON 不入库，见 `.gitignore`）；
   线上 `mem-backup.timer` 每天 03:30 备份 `mem.db` 与三份 JSON 到 `/www/backup/`，保留 14 天，备份后自动校验。
 
@@ -54,36 +59,62 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
 3. **录入方式**：不做 Web 表单（设计 §11 范围外），但提供受控写接口（P5，线上已开启、需 token）。不在电脑前用 `curl` 直接写线上；在电脑前也可以改完本机库再 `FORCE=1 ./scripts/push-data.sh` 覆盖线上（应急手段）。
 4. **写接口的安全边界**：三道闸门（配置开启 + Bearer token + 连接可写），任一缺失则不注册或拒绝启动；线上三道全开，另加 nginx 限流 5r/s、请求体 2 MB 上限。
 
-## 本地开发架构（已定）
+## 运行架构（已定）
 
-- **一个语言**：Node 22。服务器不引入 Python，也不新增 npm 包（本机实测 `node:sqlite` 可直读 `mem.db`）。
-- **两种运行模式**：本地 `./dev.sh` 一个进程同时提供 `/api/*` 与 `/study/` 页面；
-  线上把两者拆开——页面是静态产物（nginx 直接发文件），`/api/*` 由常驻的 `mem-api.service` 反代，
-  两者共用同一份渲染器代码（服务器上 `/www/builder/web/render` 软链到站点仓库）。
-- **数据链路**：`mem.db`（真源） → `sync.sh` → 三份 JSON → `build-site.mjs` → `web/.build/`。
+**一个常驻 Node 进程同时提供页面与接口**，nginx 只做反向代理，不再有静态构建产物这一层。
+
+```
+浏览器 ──▶ nginx ──▶ mem-api.service (Node 22, 127.0.0.1:8137)
+                       ├─ /study/*  → 页表（内存中的 171 个页面）
+                       └─ /api/*    → 读写 SQLite
+                                    写成功 → 重导 JSON → 重建页表 → 下一次请求就是新页面
+```
+
+- **一个语言**：Node 22。服务器不引入 Python，也不新增 npm 包（`node:sqlite` 直读 `mem.db`）。
+- **页面渲染**：`server/pages.mjs` 在进程内维护一张 `Map<路径, HTML>`。启动渲染一次；
+  每次写库成功后重建一次（线上实测 40~162ms）；跨天自动重算「今天/倒计时」。
+  请求命中内存直接返回，带 ETag，条件请求走 304。
+- **为什么不再用静态产物**：静态 HTML 只能在「构建那一刻」反映数据，写完必须再跑一次构建，
+  而构建由 systemd timer 轮询触发，最坏要等一个周期。改成运行时渲染后，
+  写接口的响应返回时页面已经是新的，没有等待窗口、没有定时任务。
+- **代价**：页面可用性绑在这个进程上（以前 Node 挂了静态文件还能看）。
+  缓解：`Restart=on-failure`；重建失败保留上一版页表，宁可发旧页面也不白屏。
+- **数据链路**：`mem.db`（真源） → `export.mjs` → 三份 JSON → 渲染器 → 内存页表。
+  JSON 契约仍然保留：它是渲染的输入，也是外部工具与离线查看的出口。
+- **静态构建仍可用**：`node server/build-site.mjs` 写盘到 `web/.build/`（服务器上由
+  `/www/builder/build-release.sh` 产出 `/www/releases/<TS>`），仅作回滚兜底，线上不再读取。
 - **Python 只做离线工具**：`scripts/*.py` 仅在本机跑迁移 / 导出 / 核对，不进服务器运行时；
   `dev.sh` 启动时会调用 `sync.sh`，这是开发便利而非运行时依赖（`SKIP_SYNC=1` 可跳过）。
-- **范围**：P4 之前不改 `myWebsite` 仓库、不部署、不 push、服务只监听 `127.0.0.1`。
+- **安全边界**：服务只监听 `127.0.0.1`，公网暴露由 nginx 承担；写接口三道闸门 + 限流。
 
 ## 改数据后怎么让站点更新
 
-线上：调写接口 → 接口内部自动重导 `index.json` / `content.json` →
-`geyuqi-deploy.timer`（每 5 分钟）发现 `data/` 四个文件的 sha256 变了就重建页面并软链切换。
-最长等 5 分钟，也可以手动立刻重建：
+**不需要做任何事。** 写完就是最新的：写接口在同一个请求里重导 JSON、重建页表，
+响应返回时页面已经变了。线上实测从发请求到 `curl` 到新页面约 80ms。
+
+跨天也不用管：页面里的「今天」「倒计时天数」按请求时的日期判断，日期一变自动重渲染。
+
+只有一种情况要手动介入——你直接改了库（绕过写接口）：
 
 ```bash
-ssh root@121.89.87.48 'sudo -u deploy /www/builder/deploy.sh'
+# 本机
+./scripts/sync.sh && curl -X POST 127.0.0.1:8137/api/export   # 只读进程没有写接口时，重启即可
+# 线上
+curl -X POST https://geyuqi.me/api/export -H "Authorization: Bearer $(cat ~/.mem-api-token)"
 ```
 
-本机：库改完后
+`POST /api/export` 会把库重新导成 JSON 并重建页表。
+
+本机开发：
 
 ```bash
 ./scripts/sync.sh      # 库 → index.json / content.json（本机离线工具）
-Ctrl+C && ./dev.sh     # 自动同步 + 重建 171 个页面 + 起服务
+Ctrl+C && ./dev.sh     # 自动同步 + 渲染 171 个页面到内存 + 起服务
 ```
 
-`./dev.sh` 启动前已默认执行同步。闭环验证用 `node scripts/verify-loopback.mjs`
-（需先停服务，会临时改一条判定并完整恢复）。服务器走静态产物，不需要 Python、不需要 `sync.sh`。
+`./dev.sh` 启动前已默认执行同步。就算忘了重启，`sync.sh` 写完 JSON 后进程会在下一次
+页面请求时自己发现文件变了并重建（`reason: contracts-changed`）。
+闭环验证用 `node scripts/verify-loopback.mjs`（需先停服务，会临时改一条判定并完整恢复）。
 
 ## 写接口（P5）
 

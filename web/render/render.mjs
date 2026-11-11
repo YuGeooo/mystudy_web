@@ -1329,11 +1329,18 @@ ${entries}
 `;
 }
 
-export function renderSite({ data, config, report, outDir, sources = [] }) {
-  fs.mkdirSync(outDir, { recursive: true });
+export function renderSite({ data, config, report, outDir, sources = [], emit = null }) {
+  // emit 给了就只产出内容、不落盘：运行时按请求出页面走这条路径，
+  // 省掉「写 172 个文件、再逐个读回来」的一次往返。
+  if (!emit) fs.mkdirSync(outDir, { recursive: true });
   const written = [];
 
   function write(relPath, content) {
+    if (emit) {
+      emit(relPath, content);
+      written.push(relPath);
+      return;
+    }
     const target = path.join(outDir, relPath);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, content);

@@ -45,9 +45,9 @@ const stat = (p) => {
   }
 };
 
-function sh(cmd, args) {
+function sh(cmd, args, env = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn(cmd, args, { cwd: ROOT, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     p.stdout.on('data', (d) => (out += d));
     p.stderr.on('data', (d) => (out += d));
@@ -106,6 +106,15 @@ console.log(`  测试库 ${(testDbStat.size / 1024 / 1024).toFixed(1)} MB`);
 // 每次从空目录开始数快照，避免上一轮的残留影响 keep 断言
 fs.rmSync(path.join(ROOT, 'data/test-backups'), { recursive: true, force: true });
 
+// 页表读的是 test-index.json / test-content.json，起服务前先按测试库导一份，
+// 否则进程启动时读不到契约会直接退出。
+console.log('  导出测试契约（test-index.json / test-content.json）');
+await sh(process.execPath, ['server/export-cli.mjs'], {
+  MEM_CONFIG: 'config.test.json',
+  MEM_WRITE_TOKEN: TOKEN,
+  NODE_NO_WARNINGS: '1',
+});
+
 console.log('\n=== 1. 起写模式服务（8138）===');
 const child = spawn(process.execPath, ['server/dev.mjs'], {
   cwd: ROOT,
@@ -113,7 +122,7 @@ const child = spawn(process.execPath, ['server/dev.mjs'], {
     ...process.env,
     MEM_CONFIG: 'config.test.json',
     MEM_WRITE_TOKEN: TOKEN,
-    MEM_BUILD_SITE: '0',
+    // 页表要建起来：新架构下页面就是本进程的一部分，写库后自动重建
     NODE_NO_WARNINGS: '1',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -680,7 +689,63 @@ try {
   check('题库用例跑完题目数回到基线', () => assert.equal(afterLib.coverage.questions, 328));
 
   // ---- 导出联动 ----
-  console.log('\n=== 10. 导出联动 ===');
+  console.log('\n=== 10. 写后页面即时可见 ===');
+// 新架构的核心承诺：写完库 → 同一进程内重建页表 → 下一次请求就是新页面，没有任何等待窗口
+const liveDate = '2026-12-25';
+// 上一轮异常中断可能留下残场，先清掉，保证「写入前是 404」这个前提成立
+const stale = (await api('GET', `/api/sessions?from=${liveDate}&to=${liveDate}`, undefined, { token: null })).body.sessions || [];
+for (const s of stale) await api('DELETE', `/api/sessions/${s.id}`);
+
+const siteBefore = (await api('GET', '/api/health', undefined, { token: null })).body.site;
+const pageBefore = await fetch(`${BASE}/study/day/${liveDate}/`, { signal: AbortSignal.timeout(5000) });
+check('写入前该日期的页面是 404', () => assert.equal(pageBefore.status, 404));
+
+const liveCreate = await api('POST', '/api/sessions', {
+  paperSlug: '2024-exam',
+  date: liveDate,
+  timingMode: 'session',
+  durationMin: 3,
+  fullText: '# 实时性用例\n\n写完立刻就能打开这一页。\n',
+  attempts: [{ questionId: '2024-exam-q001', userAnswer: 'A' }],
+});
+check('创建响应当场带回新页表版本', () => {
+  assert.equal(liveCreate.status, 201);
+  assert.ok(liveCreate.body.site, '响应里没有页表状态');
+  assert.ok(liveCreate.body.site.version > siteBefore.version, '页表版本没有前进');
+});
+
+const pageAfter = await fetch(`${BASE}/study/day/${liveDate}/`, { signal: AbortSignal.timeout(5000) });
+const liveHtml = await pageAfter.text();
+check('紧接着请求页面已是新的（无等待）', () => {
+  assert.equal(pageAfter.status, 200);
+  assert.ok(liveHtml.includes('实时性用例'), '页面里没有刚写入的内容');
+});
+
+const healthAfter = (await api('GET', '/api/health', undefined, { token: null })).body;
+const indexAfter = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/test-index.json'), 'utf8'));
+check('页表场次数与导出契约一致', () => {
+  assert.equal(healthAfter.site.stats.sessions, indexAfter.meta.coverage.sessions);
+});
+
+const etagRes = await fetch(`${BASE}/study/`, { signal: AbortSignal.timeout(5000) });
+const etag = etagRes.headers.get('etag');
+const etag304 = await fetch(`${BASE}/study/`, {
+  headers: { 'If-None-Match': etag || '' },
+  signal: AbortSignal.timeout(5000),
+});
+check('页面带 ETag，条件请求返回 304', () => {
+  assert.ok(etag, '响应没有 ETag');
+  assert.equal(etag304.status, 304);
+});
+
+const liveDel = await api('DELETE', `/api/sessions/${liveCreate.body.sessionId}`);
+const pageGone = await fetch(`${BASE}/study/day/${liveDate}/`, { signal: AbortSignal.timeout(5000) });
+check('删除后该页面立刻 404', () => {
+  assert.equal(liveDel.status, 200);
+  assert.equal(pageGone.status, 404);
+});
+
+console.log('\n=== 11. 导出联动 ===');
   const again = await api('POST', '/api/sessions', { ...createBody, sessionId: undefined });
   const exportRes = await api('POST', '/api/export', {});
   check('POST /api/export → 200', () => assert.equal(exportRes.status, 200));
@@ -722,7 +787,7 @@ try {
 
 // ---------------------------------------------------------------- 正式库保护
 
-console.log('\n=== 11. 正式库保护 ===');
+console.log('\n=== 12. 正式库保护 ===');
 const after = { db: stat(FORMAL_DB), index: stat(FORMAL_INDEX) };
 check('data/mem.db 未被触碰（sha256 + mtime 一致）', () => {
   assert.equal(after.db.hash, before.db.hash, '正式库内容变了');
@@ -732,7 +797,7 @@ check('data/index.json 未被触碰', () => {
   assert.equal(after.index.hash, before.index.hash, '正式导出物被覆盖了');
 });
 
-console.log('\n=== 12. 只读进程仍然拒绝写入 ===');
+console.log('\n=== 13. 只读进程仍然拒绝写入 ===');
 // 8137 可能已被 ./dev.sh 占着（只读配置），这时直接复用它，不再起第二个进程
 async function healthAt(port) {
   try {

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { buildSite } from '../server/build-site.mjs';
+import { buildPages } from '../server/build-site.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DB = path.join(ROOT, 'data', 'mem.db');
@@ -24,10 +24,13 @@ function checkpoint() {
 function sync() {
   execFileSync('bash', [path.join(ROOT, 'scripts', 'sync.sh')], { cwd: ROOT, stdio: 'pipe' });
 }
+// 直接问运行时页表要 data.json：与线上进程读的是同一条渲染路径，
+// 不再依赖 web/.build 里有没有磁盘产物。
 function stats() {
-  return JSON.parse(
-    fs.readFileSync(path.join(ROOT, 'web', '.build', 'data.json'), 'utf8')
-  ).stats;
+  const { pages } = buildPages();
+  const raw = pages.get('data.json');
+  assert(raw, '页表里没有 data.json');
+  return JSON.parse(raw).stats;
 }
 const fmt = (s) =>
   `knownCorrect=${s.knownCorrect} knownWrong=${s.knownWrong} accuracy=${s.accuracy.toFixed(6)}`;
@@ -47,7 +50,7 @@ try {
   assert(info.changes === 1, '测试行未命中');
 
   sync();
-  buildSite();
+  // stats() 内部会重新渲染页表，这里不用再单独构建
   changed = stats();
   assert(changed.knownCorrect === before.knownCorrect + 1, '站点正确数未 +1');
   assert(changed.knownWrong === before.knownWrong - 1, '站点错误数未 -1');
@@ -57,7 +60,6 @@ try {
   fs.rmSync(DB + '-shm', { force: true });
   fs.copyFileSync(backup, DB);
   sync();
-  buildSite();
   fs.rmSync(backup, { force: true });
 }
 
@@ -66,7 +68,7 @@ assert(restored.knownCorrect === before.knownCorrect, '恢复后正确数不一�
 assert(restored.knownWrong === before.knownWrong, '恢复后错误数不一致');
 assert(restored.accuracy === before.accuracy, '恢复后正确率不一致');
 
-console.log('闭环验证通过：改库 → sync.sh → build-site.mjs → 站点 data.json');
+console.log('闭环验证通过：改库 → sync.sh → 渲染页表 → 站点 data.json');
 console.log('  改库前  ' + fmt(before));
 console.log('  改库后  ' + fmt(changed));
 console.log('  恢复后  ' + fmt(restored));

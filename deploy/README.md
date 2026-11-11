@@ -8,28 +8,45 @@
 
 ```
 /opt/node22                 Node 22.23.4（独立安装，不替换系统 /usr/bin/node 20）
-/www/app                    站点仓库（渲染器、Tailwind、样式），git pull 来源不变
+/www/app                    站点仓库（样式与构建链）。页面已不从这里渲染，仅 Tailwind 构建时用
 /www/mem                    旧数据仓库，v2 起不再被拉取，仅作存档
-/www/data                   ★ 线上数据（mem.db + 三份 JSON），写接口的数据源
+/www/data                   ★ 线上数据（mem.db + 三份 JSON），读写都在这里
   incoming/                 推数据时的落地目录，替换后清空
   backups/                  写接口每次写库前的自动快照，保留最近 20 份
-/www/api                    Node API 服务（systemd: mem-api.service）
+/www/api                    ★ 常驻 Node 服务（systemd: mem-api.service）
   config.local.json         线上配置（write.enabled=true）
   mem-api.env               写接口 token（600 root:root，不进版本库）
-  server/                   API 代码，由 ./deploy/deploy-api.sh 同步
+  server/                   API + 页面服务，由 ./deploy/deploy-api.sh 同步
+  web/render/               页面渲染器（新架构下归本仓库管，不再软链站点仓库）
+  web/assets/app.css        Tailwind 预编译样式
   .rollback/                每次部署前的代码备份，保留 10 份
   data -> /www/data         软链
-/www/builder                构建器与部署脚本
-  server/build-site.mjs     三份 JSON → 静态站点
+/www/builder                静态构建器与部署脚本
+  server/build-site.mjs     三份 JSON → 静态站点（现在只用于手动兜底构建）
   web/render -> /www/app/scripts/build/lib    渲染器软链，代码只有一份
-  web/site.config.json -> /www/app/site.config.json
   build-release.sh          构建到指定目录
-  deploy.sh                 部署 v2（替代 /www/app/scripts/deploy.sh）
-  apply-data.sh             原子替换数据 + 重启 API + 触发重建
-/www/releases/<TS>/         每次构建一份，保留最近 5 份
-/www/site -> /www/releases/<TS>   当前线上版本（软链）
+  deploy.sh                 部署 v2（git pull + 构建 + 软链切换）
+  apply-data.sh             原子替换数据 + 重启 API
+/www/releases/<TS>/         每次静态构建一份，保留最近 5 份
+/www/site -> /www/releases/<TS>   ★ 最近一次静态构建，现在只是回滚兜底，线上不再读
 /www/backup/<YYYYMMDD>/     每日备份（mem.db + 三份 JSON），保留 14 天
 ```
+
+## 请求怎么被服务
+
+```
+浏览器 → nginx → 127.0.0.1:8137（mem-api.service）
+                  ├─ /study/*  → 内存页表，171 个页面，命中即返回（带 ETag，可 304）
+                  └─ /api/*    → SQLite 读写
+```
+
+页面**不再**是 `/www/site` 里的静态文件。`mem-api` 启动时把三份 JSON 渲染成一张
+`Map<路径, HTML>` 存在内存里，每次写库成功后重建（线上 40~230ms），
+所以写完立刻可见，没有构建产物、没有定时任务、没有等待窗口。
+
+代价是页面可用性绑在这个进程上：进程挂了 nginx 会返回 502（以前静态文件还在）。
+缓解手段：`Restart=on-failure` 自动拉起；重建失败时保留上一版页表，宁可发旧页面也不白屏；
+真出事可以临时把 nginx 的 `/study/` 切回 `alias /www/site/`（见文末回滚）。
 
 ## 数据流
 
@@ -40,22 +57,22 @@
    curl -X POST https://geyuqi.me/api/sessions -H "Authorization: Bearer $TOKEN" ...
      ├─ 写库前 VACUUM INTO 快照 → /www/data/backups/
      ├─ 单事务落库
-     ├─ 自动重导 index.json / content.json
-     └─ geyuqi-deploy.timer（5 分钟）发现 data/ 哈希变了 → 重建页面
+     ├─ 重导 index.json / content.json
+     └─ 重建内存页表 → 响应返回时页面已经是新的
 
 ② 本机改库 → 覆盖线上（应急，FORCE=1）
-   本机 mem.db → ./scripts/push-data.sh（需 FORCE=1）
+   本机 mem.db → FORCE=1 ./scripts/push-data.sh
      ├─ WAL checkpoint + sync.sh 导出
      ├─ 先触发 mem-backup 备份现网
      ├─ scp 到 /www/data/incoming/
-     └─ ssh 执行 apply-data.sh → integrity_check → 停/换/起 → 触发重建
+     └─ ssh 执行 apply-data.sh → integrity_check → 停/换/起 → 页面自动跟上
 ```
 
 反向同步（线上 → 本机副本）：`./scripts/pull-data.sh`。线上被写入后，本机这份会落后，
 拉一次即可；拉取前脚本自动给本机现状打一份 `backups/<TS>-manual/`。
 
-**注意**：`apply-data.sh` 会把线上整体替换成本机数据，**线上新建的场次会消失**。只在确认
-线上被改坏时使用。
+**注意**：`apply-data.sh` 会把线上整体替换成本机数据，**线上新建的场次会消失**。
+只在确认线上被改坏时使用。
 
 ## 写接口
 
@@ -111,23 +128,24 @@ curl -X POST https://geyuqi.me/api/sessions \
 FORCE=1 ./scripts/push-data.sh
 ```
 
-改完 `server/*.mjs` 重新部署 API：
+改完 `server/*.mjs` 或 `web/render/*.mjs` 重新部署（会一起同步页面渲染器与样式）：
 
 ```bash
 ./deploy/deploy-api.sh
 ```
 
-线上手动重建（改了渲染器或想立刻刷新页面）：
+页面不用手动刷新——进程内的页表自动跟上。只有绕过写接口直接改了库，才需要重导一次：
 
 ```bash
-ssh root@121.89.87.48 'sudo -u deploy /www/builder/deploy.sh'
+curl -X POST https://geyuqi.me/api/export -H "Authorization: Bearer $(cat ~/.mem-api-token)"
 ```
 
-看部署日志：
+看日志：
 
 ```bash
-ssh root@121.89.87.48 'journalctl -u geyuqi-deploy -n 30 --no-pager'
-ssh root@121.89.87.48 'journalctl -u mem-api -n 30 --no-pager'
+ssh root@121.89.87.48 'journalctl -u mem-api -n 40 --no-pager'
+ssh root@121.89.87.48 'journalctl -u mem-api -f'          # 跟着看
+curl -s https://geyuqi.me/api/health | grep -A12 '"site"' # 页表版本 / 页数 / 上次重建耗时
 ```
 
 看线上快照 / 手动打一份：
@@ -137,17 +155,32 @@ curl -s https://geyuqi.me/api/backups | head -40
 curl -X POST -H "Authorization: Bearer $(cat ~/.mem-api-token)" https://geyuqi.me/api/backups
 ```
 
-## 自动部署
+## 自动构建（已停用）
 
-`geyuqi-deploy.timer` 每 5 分钟触发 `deploy.sh`，逻辑已改为：
+`geyuqi-deploy.timer` 原本每 5 分钟跑一次 `deploy.sh`：`git pull` 站点仓库 → 检测 `/www/data`
+哈希变化 → 构建静态文件 → 软链切换。**页面改成运行时渲染后它没有存在意义了**，已停止并
+`disable`，否则每 5 分钟白构建 172 个没人读的文件。
 
-1. `git pull` 站点仓库（渲染器 / 样式更新照旧）
-2. **不再 pull `/www/mem`**
-3. 对 `/www/data` 四个文件做 sha256，与 `/www/.data-hash` 比对
-4. 有变化、站点有更新、或今天还没构建过 → 重新构建 + 软链切换 + 健康检查
-5. 健康检查失败自动切回上一份 release
+```bash
+# 查看状态
+ssh root@121.89.87.48 'systemctl status geyuqi-deploy.timer'
+```
 
-无变化时 5 分钟内直接退出，开销仅为一次 `git fetch` 与几次 `sha256sum`。
+脚本本身保留，是静态兜底构建的入口（`deploy.sh` 与 `build-release.sh` 都没删）：
+
+```bash
+# 手动产一份静态 release 到 /www/releases/<TS>（不切换线上）
+ssh root@121.89.87.48 'sudo -u deploy /www/builder/deploy.sh'
+```
+
+真要恢复定时构建：
+
+```bash
+ssh root@121.89.87.48 'systemctl enable --now geyuqi-deploy.timer'
+```
+
+但注意：nginx 的 `/study/` 已经指向 Node，定时构建出来的静态文件没人访问，
+除非你把 nginx 也切回 `alias /www/site/`。
 
 ## 备份
 
@@ -196,32 +229,48 @@ ssh root@121.89.87.48 '
 
 ## 回滚
 
-页面回滚（秒级，不需要重新构建）：
-
-```bash
-ssh root@121.89.87.48 '
-  ln -sfn /www/releases/<上一份TS> /www/site
-  curl -sk -o /dev/null -w "%{http_code}\n" --resolve geyuqi.me:443:127.0.0.1 https://geyuqi.me/study/
-'
-```
-
-数据回滚两条路：
-
-- 只改了少量东西 → 拿 `/www/data/backups/` 里的快照盖回去（见上面「备份」）
-- 要整份退回某个时点 → 本机 `./scripts/restore.sh <备份目录>` 恢复到底层库，再 `FORCE=1 ./scripts/push-data.sh`
-
-代码回滚（API 部署失败时自动做，也可以手动）：
+**代码回滚**（`deploy-api.sh` 部署失败时会自动做，也可以手动）：
 
 ```bash
 ssh root@121.89.87.48 '
   cd /www/api
+  ls -1t .rollback/            # 挑一份 .rollback/server-<TS>.tar.gz
   systemctl stop mem-api
-  rm -rf server
+  rm -rf server web/render
   tar xzf .rollback/server-<TS>.tar.gz
-  chown -R deploy:deploy server
+  tar xzf .rollback/web-<TS>.tar.gz
+  chown -R deploy:deploy server web
   systemctl start mem-api
 '
 ```
+
+**页面临时退回静态托管**（Node 出问题、想先保住能打开）：
+
+```bash
+ssh root@121.89.87.48 '
+  cp -a /etc/nginx/conf.d/geyuqi.me.conf /root/geyuqi.me.conf.ssr.bak
+  python3 - <<PY
+p="/etc/nginx/conf.d/geyuqi.me.conf"
+s=open(p).read()
+s=s.replace("""location /study/ {
+        proxy_pass http://127.0.0.1:8137;""","""location /study/ {
+        alias /www/site/;
+        index index.html;
+        error_page 404 /study/404.html;
+        return 200;""")
+open(p,"w").write(s)
+PY
+  nginx -t && systemctl reload nginx
+'
+```
+
+注意这条只保页面，写接口仍然只更新库和 JSON——静态页会停在上一次构建的样子。
+先确认 `/www/site` 里有一份可用的 release（`ls -l /www/site`）。
+
+**数据回滚**两条路：
+
+- 只改了少量东西 → 拿 `/www/data/backups/` 里的快照盖回去（见上面「备份」）
+- 要整份退回某个时点 → 本机 `./scripts/restore.sh <备份目录>` 恢复到底层库，再 `FORCE=1 ./scripts/push-data.sh`
 
 ## 整体回退到旧架构（v1，git 驱动）
 
@@ -248,5 +297,10 @@ nginx 配置备份在 `/etc/nginx/conf.d/geyuqi.me.conf.bak.*`（上线时的 `2
 - `mem-api` 以 `deploy` 用户运行，`ProtectSystem=strict`，只允许写 `/www/data`（SQLite 需要写 `-shm` / `-wal`，导出 JSON 与写前快照也落在那里）。
 - `mem.db` 替换后必须重启 `mem-api`，否则进程持有的仍是旧文件句柄。
 - 写接口需要 `mem-api.env` 存在且含 `MEM_WRITE_TOKEN`。**删了这个文件服务起不来**——这是故意的，宁可停服也不留半开的口子。
-- 页面更新有最长 5 分钟延迟（`geyuqi-deploy.timer` 的周期）。急着看效果就手动 `systemctl start geyuqi-deploy.service`。
+- **页面由 `mem-api` 进程提供**，进程挂了 `/study/` 就是 502（静态文件已经不用了）。
+  `Restart=on-failure` 会自动拉起；重建失败时旧页表继续服务，不会白屏。
+- 页表常驻内存，实测 RSS 约 130 MB、171 页；每次写库重建 40~230 ms，期间请求串行排队——
+  单人使用没有感知，将来真要多端高并发再说。
+- 改了 `server/*.mjs` 或 `web/render/*.mjs` 都要跑 `./deploy/deploy-api.sh`，
+  **不要**只改 `/www/api` 里的文件（下次部署会被覆盖）。
 - nginx 那两个 `conflicting server name "_"` 警告是别的 `conf.d` 文件带的，与本站无关，可以忽略。

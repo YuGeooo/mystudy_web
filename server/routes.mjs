@@ -3,7 +3,7 @@ import config from './config.mjs';
 import { get } from './db.mjs';
 import { buildMeta, buildDays } from './aggregate.mjs';
 import { todayLocal } from './dates.mjs';
-import { serveStatic } from './static.mjs';
+import * as pages from './pages.mjs';
 import * as read from './read-api.mjs';
 import { ApiError, createSession, patchSession, addAttempt, patchAttempt, resolveRedo, deleteSession, deleteAttempt } from './write.mjs';
 import {
@@ -84,11 +84,14 @@ function sendAfterWrite(res, status, payload) {
     exportError = err.message;
     console.error(`[export] 写后导出失败：${err.message}`);
   }
+  // JSON 契约换好之后立刻重建页表：这一次请求返回时，页面已经是新的了。
+  const site = pages.rebuildSafe('write');
   return send(res, status, {
     ok: true,
     ...payload,
     ...(exported ? { exported } : {}),
     ...(exportError ? { exportError } : {}),
+    site: { version: site.version, pages: site.pages, ms: site.ms, error: site.error },
   });
 }
 
@@ -105,7 +108,8 @@ export async function handle(req, res) {
     return res.end();
   }
   if (url.pathname.startsWith('/study/')) {
-    return serveStatic(req, res, url.pathname);
+    // 页面在进程内按请求给出，数据变了立刻可见（不再等构建产物刷新）
+    return pages.serve(req, res, url.pathname, todayLocal(config.timeZone));
   }
 
   if (!url.pathname.startsWith('/api')) {
@@ -164,7 +168,14 @@ export async function handle(req, res) {
         return sendAfterWrite(res, 200, resolveRedo(b, body));
       }
       if (method === 'POST' && a === 'export' && !b) {
-        return send(res, 200, { ok: true, ...exportAll(config) });
+        // 手动重导出：把库导成 JSON，并重建页表（否则页面还是旧的）
+        const exported = exportAll(config);
+        const site = pages.rebuildSafe('export');
+        return send(res, 200, {
+          ok: true,
+          ...exported,
+          site: { version: site.version, pages: site.pages, ms: site.ms, error: site.error },
+        });
       }
       if (method === 'POST' && a === 'backups' && !b) {
         return send(res, 201, { ok: true, ...snapshot('manual') });
@@ -212,6 +223,7 @@ export async function handle(req, res) {
         writeEnabled: config.writeEnabled,
         database: config.database,
         config: config.configName,
+        site: pages.status(),
       });
     }
     if (a === 'meta') return send(res, 200, buildMeta({ timeZone: config.timeZone }));
