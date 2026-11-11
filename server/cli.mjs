@@ -12,6 +12,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+// 只取错误码清单：与服务端 /api/sql 判「这是 SQL 错误而不是网络错误」用同一份定义。
+// 注意不能 import server/config.mjs —— CLI 是纯 HTTP 客户端，不该依赖本机数据库配置。
+import { SQL_ERROR_CODES } from './sql.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -25,6 +28,7 @@ const REMOTE_DB = '/www/data/mem.db';
 const REMOTE_NODE = '/opt/node22/bin/node';
 const REMOTE_SQLRUN = '/www/api/server/sqlrun.mjs';
 const LOCAL_DB = 'data/mem.db';
+const TEST_DB = 'data/test.db';
 
 // 只要出现就必须带值的选项；其余 --xxx 视为拼错，直接报用法。
 const VALUED = new Set([
@@ -34,7 +38,7 @@ const VALUED = new Set([
 ]);
 const BOOLEAN = new Set([
   'json', 'help', 'local', 'test', 'content', 'process', 'meta', 'dry-run', 'no-content',
-  'csv', 'quiet',
+  'csv', 'quiet', 'http',
 ]);
 
 class UsageError extends Error {}
@@ -260,9 +264,11 @@ async function request(ctx, method, pathname, { body, auth = false } = {}) {
 // ---------------------------------------------------------------- SQL 直连
 //
 // 预设命令覆盖不了的聚合/筛选，直接写 SQL 更快：按知识点算正确率、按周做
-// 重做转化、JOIN 三张表看某题的历次判定。SQLite 没有网络协议，所以「直连」
-// = SSH 到数据所在的机器上执行（服务器真源），或者读本机镜像。
-// 只读有硬闸：连接 readOnly + 单条语句 + 只读关键字，见 server/sqlrun.mjs。
+// 重做转化、JOIN 三张表看某题的历次判定。三条路：
+//   --http   POST /api/sql，一个 HTTPS 请求就到线上真源（不需要 SSH）
+//   默认     SSH 到数据所在的机器上执行（免密没配好时用 --http）
+//   --local  读本机镜像 data/mem.db
+// 三条路跑的是同一个只读执行器（server/sqlrun.mjs），闸门完全一致。
 
 class SqlError extends Error {
   constructor(message, code) {
@@ -332,16 +338,45 @@ function parseRunner(r, label) {
   return data;
 }
 
-async function executeSql(sql, opts) {
-  const payload = JSON.stringify({
-    sql,
-    maxRows: opts['max-rows'] ? Number(opts['max-rows']) : undefined,
-  });
+async function executeSql(sql, opts, ctx) {
+  const maxRows = opts['max-rows'] ? Number(opts['max-rows']) : undefined;
+  const payload = JSON.stringify({ sql, maxRows });
+
+  if (opts.http && (opts.db || opts.local)) {
+    throw new UsageError('--http 与 --local / --db 互斥：--http 查线上真源，--local 查本机镜像');
+  }
+
+  // `--test` 的语义是「打测试库」，SQL 这条路上以前没有对应分支：会静默落到
+  // 下面的 SSH 分支，读线上真源。以为在查 test.db、实际查生产库，是最难发现的一类错。
+  if (opts.test && !opts.http && !opts.db && !opts.local) {
+    opts.db = TEST_DB;
+  }
 
   if (opts['dry-run']) {
-    out(`# ${opts.db || opts.local ? `本机 ${opts.db || LOCAL_DB}` : `${opts.ssh || DEFAULT_SSH}:${REMOTE_DB}`}`);
+    const target = opts.http
+      ? `${ctx ? ctx.base : DEFAULT_BASE}/api/sql`
+      : opts.db || opts.local ? `本机 ${opts.db || LOCAL_DB}` : `${opts.ssh || DEFAULT_SSH}:${REMOTE_DB}`;
+    out(`# ${target}`);
     out(payload);
     return null;
+  }
+
+  if (opts.http) {
+    if (!ctx.token) {
+      throw new UsageError('--http 需要 token：放到 ~/.mem-api-token、设 MEM_WRITE_TOKEN，或加 --token');
+    }
+    let data;
+    try {
+      data = await request(ctx, 'POST', '/api/sql', { body: { sql, maxRows }, auth: true });
+    } catch (err) {
+      // 服务端把只读闸门的拒绝包成 400 + code；映射回 SqlError 才保持「SQL 出错 = 退出码 2」
+      if (err instanceof HttpError && err.data && SQL_ERROR_CODES.has(err.data.code)) {
+        throw new SqlError(err.data.error || `HTTP ${err.status}`, err.data.code);
+      }
+      throw err;
+    }
+    if (data.dryRun) return null;
+    return { ...data, db: `${ctx.base}/api/sql` };
   }
 
   if (opts.db || opts.local) {
@@ -443,14 +478,14 @@ async function readSqlText(args, opts) {
   throw new UsageError('用法：mem sql "select ..." / mem sql -f q.sql / echo "..." | mem sql');
 }
 
-async function runSqlCommand(args, opts) {
+async function runSqlCommand(args, opts, ctx) {
   const sql = (await readSqlText(args, opts)).trim();
   if (!sql) throw new UsageError('SQL 为空');
-  const data = await executeSql(sql, opts);
+  const data = await executeSql(sql, opts, ctx);
   printSql(data, opts);
 }
 
-async function runSchema(args, opts) {
+async function runSchema(args, opts, ctx) {
   const name = args[0];
   if (name && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
     throw new UsageError(`表名不合法：${name}`);
@@ -464,7 +499,7 @@ FROM sqlite_master m
 JOIN pragma_table_info(m.name) p
 WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'${filter}
 ORDER BY m.name, p.cid`;
-  const data = await executeSql(sql.replace(/\s+/g, ' ').trim(), opts);
+  const data = await executeSql(sql.replace(/\s+/g, ' ').trim(), opts, ctx);
   if (!data) return;
   if (opts.json) return printJson(data);
 
@@ -841,11 +876,11 @@ async function runWrite(ctx, group, action, rest, opts) {
 
 async function runTop(ctx, cmd, rest, opts) {
   if (cmd === 'sql') {
-    await runSqlCommand(rest, opts);
+    await runSqlCommand(rest, opts, ctx);
     return true;
   }
   if (cmd === 'schema') {
-    await runSchema(rest, opts);
+    await runSchema(rest, opts, ctx);
     return true;
   }
   if (cmd === 'pull') {
@@ -912,6 +947,7 @@ const HELP = `mem · 学习记录命令行
 
 SQL 直连（只读，预设命令覆盖不了就用这个）
   mem sql "select ..."              在线上真源执行（SSH，服务端 20s 超时）
+  mem sql --http "..."              走 HTTPS /api/sql，不用 SSH；需 token，延迟更低
   mem sql -f q.sql                  从文件读；也可 echo "..." | mem sql
   mem sql --local "..."             打本机镜像 data/mem.db（先 mem pull 更新）
   mem sql --csv "..."               输出 CSV；--json 输出原始结果
@@ -940,6 +976,7 @@ SQL 直连（只读，预设命令覆盖不了就用这个）
   --dry-run       只打印请求，不发送
   --db <path>     SQL 打指定库文件（本机路径）
   --ssh <u@h>     SQL 走哪台机器，默认 root@121.89.87.48
+  --http          SQL 走 HTTPS /api/sql（--ssh 的替代，需 token）
   --max-rows N    SQL 结果上限，默认 1000（硬顶 5000）
 
 示例
@@ -1001,7 +1038,7 @@ main()
       } else {
         out(`✗ ${err.status} ${err.data?.code ? `${err.data.code} · ` : ''}${err.data?.error ?? err.message}`);
         if (err.status === 401) {
-          out('  写操作需要 token：把 token 放进 ~/.mem-api-token，或设 MEM_WRITE_TOKEN。');
+          out('  需要 token：把 token 放进 ~/.mem-api-token，或设 MEM_WRITE_TOKEN（写操作与 --http 的 SQL 都要）。');
         }
         if (err.data?.details) out(`  ${JSON.stringify(err.data.details)}`);
       }

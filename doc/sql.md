@@ -2,25 +2,50 @@
 
 预设命令（`mem q ls`、`mem redo`）只覆盖固定几种看法。要算「条件充分性判断这半年正确率怎么走的」「哪些题错了两次以上还标着重做」，写 SQL 比加命令快得多。
 
-## 1. 为什么是 SSH，而不是一个数据库地址
+## 1. 三条路，都没有数据库地址
 
-SQLite 是嵌入式库，**没有网络协议**。文件在服务器上，客户端就只能：
+SQLite 是嵌入式库，**没有网络协议**——不存在「填个 host/port 就能连」的连接串。文件在服务器上，客户端只能：
 
 | 方式 | 读的是 | 延迟 | 数据新鲜度 |
 |---|---|---|---|
+| `mem sql --http "..."` | 服务器（`POST /api/sql`） | ~35ms | 实时 |
 | `mem sql "..."`（默认） | 服务器 `/www/data/mem.db` | 首次 ~0.5s，之后 ~0.17s | 实时 |
 | `mem sql --local` | 本机 `data/mem.db` | ~40ms | 取决于上次 `mem pull` |
 | 直接 `sqlite3 data/mem.db` | 本机镜像 | 最快 | 同上 |
 | HTTP `/api/*` | 服务器 | ~200ms | 实时，但只有固定几种切面 |
 
-所以「直连」= SSH 到数据所在的机器上执行。`mem sql` 用 `ControlMaster` 复用连接，连着查十条不会每次重新握手。
+`--http` 是**给 SQLite 补上一层 HTTP 传输**：服务端把语句交给 `server/sqlrun.mjs` 执行，
+所以读的仍然是那个 `.db` 文件，只是不再需要 SSH。默认那条 SSH 路保留——免密没配好、
+或者 API 进程挂了，它还能进。`mem sql` 用 `ControlMaster` 复用连接，连着查十条不会每次重新握手。
 
-**写操作仍然走 API**（`mem s new`、`mem a set` ……）：写要过校验、要留快照、要重建页表，绕过这些直接 `UPDATE` 会留下不一致的页面和无法追溯的改动。执行器是只读的，`delete`、`pragma journal_mode=...` 都会被拒。
+### 1.1 HTTP 入口（`/api/sql`）
+
+```
+GET  /api/sql?sql=select+1+as+x&format=json|csv&maxRows=100
+POST /api/sql   {"sql":"select 1 as x","maxRows":100,"format":"csv"}
+Authorization: Bearer <token>
+```
+
+- **要 token**。是读操作，但一条 `select * from attempts` 就能把整库导走，和写一样属于「只有本人能做」。
+- **闸门与 SSH 那条路完全一致**：同一个 `server/sqlrun.mjs`，只读连接 + 单条语句 + 只读关键字 + 行数上限 1000（硬顶 5000）。
+- **在子进程里执行**：`node:sqlite` 是同步驱动，一条不收敛的递归 CTE 会把页面服务一起卡住。
+  所以每次查询起一个一次性子进程，20s 超时直接 SIGKILL，返回 `408 / code=timeout`。
+- `format=csv` 直接给 Excel / pandas 用，不需要先落一个 `.csv` 再传。
+
+```bash
+mem sql --http "select count(*) from attempts"
+mem sql --http --csv "select topic, count(*) n from questions group by 1" > topics.csv
+curl -sG https://geyuqi.me/api/sql -H "Authorization: Bearer $TOKEN" \
+     --data-urlencode "sql=select count(*) from attempts"
+```
+
+**写操作仍然走 API**（`mem s new`、`mem a set` ……）：写要过校验、要留快照、要重建页表，绕过这些直接 `UPDATE` 会留下不一致的页面和无法追溯的改动。执行器是只读的，`delete`、`pragma journal_mode=...` 都会被拒——换成别的数据库也一样，这是设计而不是限制。
 
 ## 2. 上手
 
 ```bash
 mem sql "select count(*) from attempts"
+mem sql --http "select count(*) from attempts"   # 不 SSH，走 /api/sql（需 token）
 mem sql -f q.sql
 echo "select 1" | mem sql
 mem sql --csv "..." > out.csv
@@ -176,6 +201,21 @@ where s.duration_min is not null
 order by 每题分钟 desc limit 10
 ```
 
+### 页面口径的聚合（不想自己算就用这个）
+
+页面的统计有既定口径：学习天数按 `sessions.date`、进度按题号去重、卷掌握度还带 `scorePartial`
+标记。自己写 SQL 照抄容易漏条件，直接取渲染页表时**已经算好的那一份**：
+
+```bash
+```
+
+`section` 可选 `meta` / `stats` / `today` / `days` / `weeks` / `currentWeekKey` / `countdown` /
+`volumes` / `knowledge` / `warnings`；不带 `section` 返回全集（约 96 KB）。它是页面数据的原样对象，
+与页面同一时刻、同一口径——**写库后两者一起变，不存在第二个统计口径**。
+
+要用 SQL 自己算也可以，但那些口径差异（`correct` 三态、`distinct` 去重、`duration_min` 为空不估算）
+得自己对齐；能取现成的就别重算。
+
 ### 本月 vs 上月
 
 ```sql
@@ -196,7 +236,8 @@ group by 月份 order by 月份 desc
 | PRAGMA | 白名单 | 只放行 `table_info`、`index_list` 这类只读的 |
 | SQL 长度 | 8000 字节 | 长查询写成 `.sql` 文件更省事 |
 | 结果行数 | 默认 1000，硬顶 5000 | `--max-rows` 调；超了会标 `truncated` |
-| 执行时间 | 服务器端 `timeout 20s` | 递归 CTE 写错不会拖死进程 |
+| 执行时间 | SSH：服务器端 `timeout 20s`；HTTP：子进程 20s 后 SIGKILL | 递归 CTE 写错不会拖死进程，也不会卡住页面服务 |
+| HTTP 鉴权 | Bearer token | `/api/sql` 与写接口共用同一把 token；缺了返回 401 |
 
 写不进去是设计如此。要改数据用 `mem a set ...`，走 `/api/attempts/:id`，那边会做快照和页面重建。
 
@@ -206,9 +247,15 @@ group by 月份 order by 月份 desc
 # 要解析就加 --json，结构固定：{ok, columns, rows, count, truncated, ms, db}
 mem sql --json "select ..." | jq '.rows'
 
+# 换机器了 / 本机没有 SSH 密钥：走 HTTPS 接口，输出结构与 SSH 那条完全一致
+mem sql --http --json "select ..." | jq '.rows'
+
 # 长查询写文件，避免 shell 引号
 mem sql -f /tmp/q.sql --json
 ```
+
+`--http` 的 `db` 字段是接口地址（`https://geyuqi.me/api/sql`），不是文件路径——
+判断「这份结果来自真源还是本机镜像」看这一行就够了。
 
 约定：
 
@@ -221,7 +268,9 @@ mem sql -f /tmp/q.sql --json
 
 | 现象 | 原因 |
 |---|---|
-| `连不上 root@...（SSH 免密没配好？）` | 换机器了，`--ssh user@host` 或配 `~/.ssh/config` |
+| `连不上 root@...（SSH 免密没配好？）` | 换机器了：`mem sql --http` 走 HTTPS，或 `--ssh user@host`、配 `~/.ssh/config` |
+| `401 unauthorized`（`--http`） | token 缺失或不匹配：`~/.mem-api-token`、`MEM_WRITE_TOKEN`，或 `--token` |
+| `408 timeout`（`--http`） | 查询没收敛，20s 被掐断：加 `limit` 或收窄 `where` |
 | `no such column: topic` on attempts | 字段在 `questions` 上，要 join |
 | `只允许单条语句` | 分号后面还有第二条，拆开跑 |
 | `PRAGMA x 不在只读白名单里` | 只读执行器不开放带副作用的 pragma |

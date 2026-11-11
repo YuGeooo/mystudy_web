@@ -339,7 +339,15 @@ try {
     assert.match(r.text, /未知命令/);
   });
 
-  // ---- SQL 直连：走 --local 读正式库的只读连接，不碰测试库也不打线上 ----
+  // ---- SQL 直连：--local 读正式库镜像；--test 必须落到测试库 ----
+  await check('sql --test 读测试库而不是线上（--test 语义一致）', async () => {
+    const r = await mem(['--test', 'sql', '--json', 'select count(*) as n from attempts']);
+    assert.equal(r.code, 0, r.text);
+    const d = JSON.parse(r.stdout);
+    assert.equal(d.ok, true);
+    assert.match(String(d.db), /test\.db/, `应读测试库，实际：${d.db}`);
+  });
+
   await check('sql --local --json 返回列与行', async () => {
     const r = await mem(['sql', '--local', '--json', 'select count(*) as n from attempts']);
     assert.equal(r.code, 0, r.text);
@@ -368,6 +376,46 @@ try {
     assert.equal(r.code, 0);
     assert.match(r.stdout, /"sql":"select 1"/);
     assert.ok(!r.stdout.includes('"rows"'));
+  });
+
+  // ---- --http：不走 SSH，直接打 /api/sql（这里打 8138 的测试实例）----
+  await check('sql --http --json 返回列与行', async () => {
+    const r = await mem(['--test', '--http', '--json', 'sql', 'select count(*) as n from attempts'], {
+      env: { MEM_WRITE_TOKEN: TOKEN },
+    });
+    assert.equal(r.code, 0, r.text);
+    const d = JSON.parse(r.stdout);
+    assert.equal(d.ok, true);
+    assert.deepEqual(d.columns, ['n']);
+    assert.ok(d.rows[0].n > 0);
+    assert.match(d.db, /\/api\/sql$/, '结果尾行应标明走的是 HTTP 接口');
+  });
+
+  await check('sql --http --csv 输出表头与数据行', async () => {
+    const r = await mem(['--test', '--http', '--csv', 'sql', 'select 1 as a, 2 as b'], {
+      env: { MEM_WRITE_TOKEN: TOKEN },
+    });
+    assert.equal(r.code, 0, r.text);
+    assert.equal(r.stdout.trim().split('\n')[0], 'a,b');
+    assert.equal(r.stdout.trim().split('\n')[1], '1,2');
+  });
+
+  await check('sql --http 写操作退出码 2', async () => {
+    const r = await mem(['--test', '--http', 'sql', 'delete from attempts'], { env: { MEM_WRITE_TOKEN: TOKEN } });
+    assert.equal(r.code, 2, r.text);
+    assert.match(r.text, /只读/);
+  });
+
+  await check('sql --http 与 --local 互斥（退出码 2）', async () => {
+    const r = await mem(['--test', '--http', '--local', 'sql', 'select 1'], { env: { MEM_WRITE_TOKEN: TOKEN } });
+    assert.equal(r.code, 2, r.text);
+    assert.match(r.text, /互斥/);
+  });
+
+  await check('sql --http 缺 token 时本地就拦住', async () => {
+    const r = await mem(['--test', '--http', 'sql', 'select 1']);
+    assert.equal(r.code, 2, r.text);
+    assert.match(r.text, /--http 需要 token/);
   });
 
   await check('schema --local 列出字段', async () => {

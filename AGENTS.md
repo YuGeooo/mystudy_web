@@ -88,12 +88,15 @@ mem q set 2024-exam-q001 --file patch.json
 
 ```bash
 mem sql "select q.topic, count(*) n from attempts a join questions q on q.id=a.question_id group by 1"
+mem sql --http "..."        # 不 SSH，打 POST /api/sql（需 token，~35ms）
 mem sql --json "..."        # {ok, columns, rows, count, truncated, ms}
 mem schema                  # 字段名先查，不要猜
 ```
 
-- 只读硬闸：单条语句、只读关键字、行数上限 1000、服务器端 20s 超时（`server/sqlrun.mjs`）。
-- SQLite 没有网络协议，`mem sql` 是 SSH 到服务器上执行；`mem sql --local` 读本机库文件 `data/mem.db`（**不**连 8137，也不需要起服务）。
+- 只读硬闸：单条语句、只读关键字、行数上限 1000、20s 超时（`server/sqlrun.mjs`）。
+- 三条传输方式，同一个执行器：默认 SSH 到服务器；`--http` 打 `/api/sql`（换机器没配密钥时用这个）；
+  `--local` 读本机库文件 `data/mem.db`（**不**连 8137，也不需要起服务）。
+- `/api/sql` 也要 Bearer token（能一次导走整库），且语句在子进程里跑——同步驱动卡不住页面服务。
 - 写完 `INSERT/UPDATE` 那条路仍然只有 `mem a set` / `mem s new`：直接改库会绕过快照和页表重建。
 - 现成查询与口径（`correct` 三态、`topic` 在哪张表）见 [doc/sql.md](doc/sql.md)，那里每条 SQL 都由 `server/test-sql.mjs` 实际跑过。
 
@@ -103,8 +106,6 @@ mem schema                  # 字段名先查，不要猜
 
 ```bash
 npm run dev        # 预检 → sync.sh 导出 JSON → 起 8137（只读）
-npm test           # 预检 → 语法 → 导出等价 → 写接口 108 → CLI 21 → 只读 19
-npm run check      # 只查语法（32 个 .mjs + 15 个 .sh）
 ```
 
 - `npm test` 全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的 sha256 + mtime，一致才算绿。

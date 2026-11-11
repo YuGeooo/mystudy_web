@@ -15,14 +15,12 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
   `sync.sh`（串联导出）、`verify-loopback.mjs`（闭环验证）。
   服务端：`server/dev.mjs`（入口）、`pages.mjs`（内存页表 + 请求处理）、
   `build-site.mjs`（渲染）、`routes.mjs`（分发）、`read-api.mjs` / `write.mjs` / `catalog.mjs`（数据）、
-  `export.mjs`（Node 版导出器）、`backup.mjs`（写前快照）。
-- **P1 本地服务**：`./dev.sh` 起 `http://127.0.0.1:8137`。零框架，第三方依赖只有一个 `marked`，
-  其余全是 Node 22 标准库（`node:http` + `node:sqlite`），数据库只读。
-  端点 `/api/health` / `/api/meta` / `/api/days`；`node server/smoke-test.mjs` 自测 19 项全通过。
+  `export.mjs`（Node 版导出器）、`backup.mjs`（写前快照）、`sql.mjs`（只读 SQL 的子进程隔离执行）。
+- **P1 本地服务**：`./dev.sh` 起 `http://127.0.0.1:8137`。零框架，第三方依赖只有 `marked`（Markdown → HTML）
+  端点 `/api/health` / `/api/meta` / `/api/days`；`node server/smoke-test.mjs` 自测 20 项全通过。
   代码在 `server/`，配置在 `config.local.json`。
 - **P2 本地站点**：`http://127.0.0.1:8137/study/`。三份数据契约：`index.json`、
   `content.json`（`scripts/export_content.py` 从库里还原 48 份 Markdown 全文）、`volumes.json`。
-  渲染器与样式是 `web/` 下的副本。**页面按请求在进程内渲染**（171 页常驻内存，首次 74ms）。
   与原构建器同时间点对比：共同 171 个文件，`data.json` 顶层字段一致，0 警告；
   唯一差异是 3 个「纯 git 提交日」页面消失（学习日 27 → 24），符合 `sessions.date` 口径。
 - **P3 闭环**：不实现录入界面（设计 §11 范围外）。已打通「改库 → 同步 JSON → 重建站点」：
@@ -40,11 +38,14 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
   **响应返回时页面已经是新的**，没有定时任务、没有等待窗口。
   **线上是可写入的那一份真源**，本机用 `./scripts/pull-data.sh` 拉回做副本。
   站点仓库 `/Users/geyuqi/Documents/aliyun/myWebsite/` **一行未改**；`web/render/` 是它的副本，
-  唯一的分叉是 `renderSite()` 多了一个 `emit` 参数（支持渲染到内存），默认行为不变。
+  题干与选项原文 + 按节的题号导航（跳到 `#2024-exam-q001` 这类锚点）。
+  原文自带的答案附录（如形式逻辑一的答案速查表）整节略去，避免看卷时被剧透。
 - **加固**：本仓库已纳入 git（`data/mem.db` 与导出 JSON 不入库，见 `.gitignore`）；
   线上 `mem-backup.timer` 每天 03:30 备份 `mem.db` 与三份 JSON 到 `/www/backup/`，保留 14 天，备份后自动校验。
 - **日常入口**：`bin/mem` 命令行（查询 / 录入 / 订正 / 销账 / 题库 / 快照），
-  说明见 [doc/cli.md](doc/cli.md)；`node server/test-cli.mjs` 21 项验收。
+  说明见 [doc/cli.md](doc/cli.md)；`node server/test-cli.mjs` 33 项验收。
+- **只读 SQL 也能走 HTTP**：`GET|POST /api/sql`（需 token，子进程隔离 + 20s 超时，`format=csv`），
+  `mem sql --http` 一个请求就到线上真源（~35ms），不再强制 SSH；默认那条 SSH 路保留为后备。
 
 ## v1 → v2 的关键变化
 
@@ -70,12 +71,10 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
 
 ```
 浏览器 ──▶ nginx ──▶ mem-api.service (Node 22, 127.0.0.1:8137)
-                       ├─ /study/*  → 页表（内存中的 171 个页面）
                        └─ /api/*    → 读写 SQLite
                                     写成功 → 重导 JSON → 重建页表 → 下一次请求就是新页面
 ```
 
-- **一个语言**：Node 22。服务器不引入 Python；第三方依赖只有一个 `marked`（版本锁在
   `package-lock.json`），其余全是标准库（`node:sqlite` 直读 `mem.db`）。
 - **页面渲染**：`server/pages.mjs` 在进程内维护一张 `Map<路径, HTML>`。启动渲染一次；
   每次写库成功后重建一次（线上实测 40~162ms）；跨天自动重算「今天/倒计时」。
@@ -125,8 +124,6 @@ npm ci                   # 按 package-lock.json 精确安装（只有 marked）
 | 命令 | 作用 |
 |---|---|
 | `npm run dev` | 预检 → 同步 JSON → 起服务（等价 `./dev.sh`） |
-| `npm test` | 全量：预检 → 语法 → 导出等价 → SQL 27 → 写接口 108 → CLI 27 → 只读 19 |
-| `npm run check` | 只做语法检查（34 个 `.mjs` + 15 个 `.sh`，含 `bin/mem`） |
 | `npm run site` | 静态构建到 `web/.build/`（离线预览与回滚兜底） |
 
 写接口测试全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的
@@ -202,6 +199,7 @@ Ctrl+C && ./dev.sh     # 自动同步 + 渲染 171 个页面到内存 + 起服�
 | 备份 | 写库前自动快照 · `GET /api/backups` 列快照 · `POST /api/backups` 手动打一份 |
 | 导出 | `POST /api/export`（Node 版导出器，服务器不需要 Python） |
 | 只读补充 | `/api/papers` · `/api/questions`（含题干全文检索）· `/api/sessions` · `/api/attempts` · `/api/attempts/:id` · `/api/redo` |
+| 只读 SQL | `GET/POST /api/sql`——只读执行器搬到 HTTPS 后面，`format=csv` 直接导出；**需 token**，子进程隔离 + 20s 超时 |
 | 开关 | `write.enabled=true` + `MEM_WRITE_TOKEN`（≥16 字符）+ 连接可写，缺一不可 |
 | 线上 | 已开启（`deploy/config.server.json`，token 在 `/www/api/mem-api.env`） |
 | 本机 | `config.local.json` 关闭（8137 只读）；`config.test.json` 开启（8138，指向 `data/test.db`） |
@@ -209,7 +207,6 @@ Ctrl+C && ./dev.sh     # 自动同步 + 渲染 171 个页面到内存 + 起服�
 验证（不碰正式库）：
 
 ```bash
-node server/test-write-api.mjs    # 108 项：鉴权/创建/校验/事务性/订正/销账/场次订正/单题增删/题库读写/备份/导出/正式库保护
 node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段值与键顺序逐项比对
 ```
 
@@ -255,12 +252,19 @@ mem schema                        # 4 张表全字段
 mem pull                          # 拉线上库到本机，之后可直接 sqlite3 data/mem.db
 ```
 
-SQLite 没有网络协议，所以「直连」= SSH 到数据所在的机器上执行 `server/sqlrun.mjs`
-（`ControlMaster` 复用连接，首次 ~0.5s、之后 ~0.17s）。执行器**只读**：单条语句、只读关键字、
-行数上限、服务器端 20s 超时。写数据仍走 API，否则会绕过快照和页表重建。
+SQLite 没有网络协议，所以有三条传输方式，跑的是同一个只读执行器：
 
-验证：`node server/test-cli.mjs`（27 项，跑在 `data/test.db` 上，正式库 sha256 前后比对）、
-`node server/test-sql.mjs`（27 项，只读闸门 + 文档里的 SQL 全跑一遍）。
+- **默认**：SSH 到数据所在的机器上执行 `server/sqlrun.mjs`（`ControlMaster` 复用连接，首次 ~0.5s、之后 ~0.17s）。
+- **`--http`**：打 `POST /api/sql`，一个 HTTPS 请求就到线上真源（~35ms，不用 SSH，需 token）。
+  语句在子进程里跑——`node:sqlite` 是同步驱动，一条不收敛的递归 CTE 会把页面服务一起卡住，
+  所以 20s 超时直接 SIGKILL。
+- **`--local`**：读本机镜像 `data/mem.db`，最快但取决于上次 `mem pull`。
+
+执行器**只读**：单条语句、只读关键字、行数上限、服务器端 20s 超时。写数据仍走 API，
+否则会绕过快照和页表重建。
+
+验证：`node server/test-cli.mjs`（33 项，跑在 `data/test.db` 上，正式库 sha256 前后比对）、
+`node server/test-sql.mjs`（32 项，只读闸门 + 超时掐断 + 文档里的 SQL 全跑一遍）。
 
 ## 备份与恢复
 

@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { runSqlIsolated, toCsv } from './sql.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUNNER = path.join(ROOT, 'server', 'sqlrun.mjs');
@@ -156,6 +157,57 @@ for (const [i, sql] of blocks.entries()) {
     assert.ok(Array.isArray(r.data.rows));
   });
 }
+
+console.log('\n=== 4. 进程隔离执行器（HTTP /api/sql 走的这一层）===');
+// 为什么要单独测：HTTP 那条路不直接开库，而是把语句交给子进程里的 sqlrun.mjs。
+// 闸门共用一份代码，但「超时能掐断」只有这一层做得到，必须真的验一次。
+
+await check('返回字段与 CLI 一致（columns / count / truncated / ms）', async () => {
+  const r = await runSqlIsolated(DB, 'select count(*) as n from attempts');
+  assert.deepEqual(r.columns, ['n']);
+  assert.ok(r.rows[0].n > 0);
+  assert.equal(r.count, 1);
+  assert.equal(r.truncated, false);
+  assert.equal(typeof r.ms, 'number');
+  assert.equal(r.limit, 1000);
+});
+
+await check('写语句在隔离执行器里同样被拒', async () => {
+  await assert.rejects(
+    () => runSqlIsolated(DB, 'update attempts set correct = 1'),
+    (err) => err.code === 'bad_request'
+  );
+});
+
+await check('不收敛的查询被超时掐断（code=timeout）', async () => {
+  const t0 = Date.now();
+  await assert.rejects(
+    () => runSqlIsolated(
+      DB,
+      'with recursive c(x) as (select 1 union all select x+1 from c) select count(*) from c',
+      { timeoutMs: 500 }
+    ),
+    (err) => err.code === 'timeout'
+  );
+  assert.ok(Date.now() - t0 < 8000, '超时没有真的掐断子进程');
+});
+
+await check('库不存在时报 no_database 而不是崩', async () => {
+  await assert.rejects(
+    () => runSqlIsolated(path.join(ROOT, 'data', 'nope.db'), 'select 1'),
+    (err) => err.code === 'no_database'
+  );
+});
+
+await check('toCsv 转义逗号、引号与换行', async () => {
+  const csv = toCsv(['a', 'b'], [{ a: 1, b: 'x,y' }, { a: 2, b: 'q"q' }, { a: null, b: 'l1\nl2' }]);
+  const lines = csv.split('\n');
+  assert.equal(lines[0], 'a,b');
+  assert.equal(lines[1], '1,"x,y"');
+  assert.ok(csv.includes('"q""q"'));
+  assert.ok(csv.includes('"l1\nl2"'));
+  assert.ok(csv.endsWith('\n'));
+});
 
 console.log(`\n${failed === 0 ? '全部通过' : '有失败'}：${passed} 通过 / ${failed} 失败`);
 process.exitCode = failed === 0 ? 0 : 1;

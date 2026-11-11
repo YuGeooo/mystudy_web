@@ -778,6 +778,64 @@ console.log('\n=== 11. 导出联动 ===');
     assert.ok(text.includes('本场用于写接口验收'), '正文丢失');
   });
 
+  // ---- 只读 SQL：/api/sql 是读操作，但能把整库导走，所以同样要 token ----
+  console.log('\n=== 11.5 只读 SQL（/api/sql）===');
+
+  const sqlNoAuth = await api('POST', '/api/sql', { sql: 'select 1 as x' }, { token: null });
+  check('无 token 查 SQL → 401', () => assert.equal(sqlNoAuth.status, 401));
+
+  const sqlOk = await api('POST', '/api/sql', { sql: 'select count(*) as n from attempts' });
+  check('POST /api/sql 返回列与行', () => {
+    assert.equal(sqlOk.status, 200);
+    assert.equal(sqlOk.body.ok, true);
+    assert.deepEqual(sqlOk.body.columns, ['n']);
+    assert.equal(typeof sqlOk.body.rows[0].n, 'number');
+    assert.equal(sqlOk.body.db, 'test.db', 'db 只回文件名，不该漏服务器绝对路径');
+  });
+
+  const sqlGet = await api('GET', `/api/sql?sql=${encodeURIComponent('select 1 as x')}`);
+  check('GET /api/sql?sql= 与 POST 等价', () => {
+    assert.equal(sqlGet.status, 200);
+    assert.equal(sqlGet.body.rows[0].x, 1);
+  });
+
+  const sqlWrite = await api('POST', '/api/sql', { sql: 'delete from attempts' });
+  check('写语句被只读闸门拒（400 bad_request）', () => {
+    assert.equal(sqlWrite.status, 400);
+    assert.equal(sqlWrite.body.code, 'bad_request');
+  });
+
+  const sqlMulti = await api('POST', '/api/sql', { sql: 'select 1; drop table attempts' });
+  check('多语句被拒（400）', () => {
+    assert.equal(sqlMulti.status, 400);
+    assert.match(sqlMulti.body.error, /单条语句/);
+  });
+
+  const sqlBad = await api('POST', '/api/sql', { sql: 'select * from no_such_table' });
+  check('表名写错 → 400 bad_sql', () => {
+    assert.equal(sqlBad.status, 400);
+    assert.equal(sqlBad.body.code, 'bad_sql');
+  });
+
+  const sqlCapped = await api('POST', '/api/sql', { sql: 'select id from attempts', maxRows: 3 });
+  check('maxRows 生效并标记 truncated', () => {
+    assert.equal(sqlCapped.body.count, 3);
+    assert.equal(sqlCapped.body.truncated, true);
+  });
+
+  const sqlCsv = await api('GET', `/api/sql?format=csv&sql=${encodeURIComponent("select 1 as a, 'x,y' as b")}`);
+  check('format=csv 输出表头并转义逗号', () => {
+    assert.equal(sqlCsv.status, 200);
+    assert.ok(sqlCsv.text.startsWith('a,b'), sqlCsv.text);
+    assert.match(sqlCsv.text, /"x,y"/);
+  });
+
+  const sqlEmpty = await api('POST', '/api/sql', {});
+  check('空 sql → 400', () => assert.equal(sqlEmpty.status, 400));
+
+  const sqlMethod = await api('DELETE', '/api/sql');
+  check('DELETE /api/sql → 405', () => assert.equal(sqlMethod.status, 405));
+
   // 收尾：把这个测试场次删掉，测试库回到基线
   await api('DELETE', `/api/sessions/${again.body.sessionId}`);
 } finally {

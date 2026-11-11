@@ -1,10 +1,12 @@
 import { timingSafeEqual } from 'node:crypto';
+import path from 'node:path';
 import config from './config.mjs';
 import { get } from './db.mjs';
 import { buildMeta, buildDays } from './aggregate.mjs';
 import { todayLocal } from './dates.mjs';
 import * as pages from './pages.mjs';
 import * as read from './read-api.mjs';
+import { runSqlIsolated, toCsv, SqlError } from './sql.mjs';
 import { ApiError, createSession, patchSession, addAttempt, patchAttempt, resolveRedo, deleteSession, deleteAttempt } from './write.mjs';
 import {
   createPaper, patchPaper, deletePaper, createQuestion, patchQuestion, deleteQuestion,
@@ -62,7 +64,7 @@ function requireAuth(req) {
   const header = req.headers.authorization || '';
   const m = /^Bearer\s+(.+)$/i.exec(header);
   if (!m || !config.writeToken || !safeEqual(m[1], config.writeToken)) {
-    throw new ApiError(401, 'unauthorized', '写操作需要 Authorization: Bearer <token>');
+    throw new ApiError(401, 'unauthorized', '需要 Authorization: Bearer <token>');
   }
 }
 
@@ -99,6 +101,62 @@ function sendAfterWrite(res, status, payload) {
 // 对其余路径的非 GET 仍返回 405（确实是方法用错了）。
 const WRITABLE_ROOTS = new Set(['sessions', 'attempts', 'export', 'papers', 'questions', 'backups']);
 
+/**
+ * 只读 SQL：`GET /api/sql?sql=...` 或 `POST /api/sql {"sql":"..."}`。
+ *
+ * 是读操作，但仍然要 token —— 一条 `select * from attempts` 就能把整库导走，
+ * 和写一样属于「只有本人能做的事」。加 `?format=csv` 直接拿 CSV。
+ *
+ * 语句在子进程里执行，校验与超时都在 `server/sqlrun.mjs`（与 SSH 那条路同一份代码）。
+ */
+async function handleSql(req, res, url, method) {
+  if (!['GET', 'HEAD', 'POST'].includes(method)) {
+    return send(res, 405, {
+      error: 'method not allowed', method,
+      hint: 'GET /api/sql?sql=select+1  或  POST /api/sql {"sql":"select 1"}',
+    });
+  }
+  requireAuth(req);
+
+  const payload = method === 'POST' ? await readBody(req) : {};
+  const sql = String(payload.sql ?? q(url, 'sql') ?? '');
+  const maxRows = payload.maxRows ?? q(url, 'maxRows');
+  const format = String(payload.format ?? q(url, 'format') ?? 'json').toLowerCase();
+
+  if (!sql.trim()) {
+    throw new ApiError(400, 'bad_request', 'sql 为空：POST {"sql":"..."} 或 ?sql=...');
+  }
+  if (format !== 'json' && format !== 'csv') {
+    throw new ApiError(400, 'bad_format', 'format 只支持 json / csv');
+  }
+
+  let result;
+  try {
+    result = await runSqlIsolated(config.dbPath, sql, { maxRows });
+  } catch (err) {
+    if (err instanceof SqlError) {
+      const status = err.code === 'timeout' ? 408
+        : (err.code === 'no_database' || err.code === 'open_failed') ? 500
+          : 400;
+      throw new ApiError(status, err.code, err.message);
+    }
+    throw err;
+  }
+
+  if (format === 'csv') {
+    const body = toCsv(result.columns, result.rows);
+    res.writeHead(200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'no-store',
+    });
+    return res.end(method === 'HEAD' ? undefined : body);
+  }
+
+  // db 只回文件名：绝对路径是服务器内部结构，没必要出现在响应里
+  return send(res, 200, { ok: true, db: path.basename(config.dbPath), ...result });
+}
+
 export async function handle(req, res) {
   const url = new URL(req.url, `http://${config.host}:${config.port}`);
 
@@ -121,6 +179,11 @@ export async function handle(req, res) {
   const [, a, b, c] = seg;
 
   try {
+    // ---------- 只读 SQL（不走写模式开关，但同样要 token） ----------
+    if (a === 'sql' && !b) {
+      return await handleSql(req, res, url, method);
+    }
+
     // ---------- 写入（未开启写模式时完全不注册，返回 404） ----------
     if (method !== 'GET' && method !== 'HEAD') {
       if (!config.writeEnabled) {
@@ -221,6 +284,7 @@ export async function handle(req, res) {
         sqlite: get('SELECT sqlite_version() AS version').version,
         readOnly: config.readOnly,
         writeEnabled: config.writeEnabled,
+        sql: Boolean(config.writeToken),
         database: config.database,
         config: config.configName,
         site: pages.status(),
@@ -307,6 +371,7 @@ export async function handle(req, res) {
         'GET /api/sessions', 'GET /api/sessions/:id',
         'GET /api/attempts', 'GET /api/attempts/:id', 'GET /api/redo',
         'GET /api/backups',
+        'GET|POST /api/sql （需 token）',
       ],
     });
   } catch (err) {

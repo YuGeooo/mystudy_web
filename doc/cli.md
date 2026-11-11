@@ -367,13 +367,18 @@ mem sql "select topic, count(*) n from attempts join questions q on q.id=attempt
 mem sql -f q.sql                 # 长查询写文件
 mem sql --csv "..." > out.csv
 mem sql --json "..."             # {ok, columns, rows, count, truncated, ms}
+mem sql --http "..."             # 走 HTTPS /api/sql，不用 SSH（需 token，~35ms）
 mem sql --local "..."            # 打本机镜像，最快（先 mem pull）
 mem schema [表]                  # 字段名不用猜
 ```
 
-只读，且只有一条语句。SQLite 没有网络协议，所以 `mem sql` 实际是 SSH 到服务器上跑
-`server/sqlrun.mjs`（连接复用，首次 ~0.5s、之后 ~0.17s）。写数据仍然走 `mem a set` 这一套，
-否则会绕过快照和页表重建。
+只读，且只有一条语句。SQLite 没有网络协议，所以有三条传输方式，跑的却是同一个执行器
+`server/sqlrun.mjs`：默认 SSH 到服务器（连接复用，首次 ~0.5s、之后 ~0.17s）；
+`--http` 直接打 `/api/sql`（~35ms，换机器没配密钥时用这个）；`--local` 读本机镜像。
+写数据仍然走 `mem a set` 这一套，否则会绕过快照和页表重建。
+
+`--http` 与 `--local` / `--db` 互斥；缺 token 时 CLI 在本地就拦住（退出码 2），
+不会白跑一趟请求。
 
 完整的表结构、12 个常用查询（趋势 / 薄弱点 / 重做转化 / 时长分布）和边界说明见
 **[sql.md](sql.md)**。

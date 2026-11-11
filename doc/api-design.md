@@ -46,8 +46,22 @@ token 从环境变量 `MEM_WRITE_TOKEN` 读取（≥16 字符），不写进配�
 | GET | `/api/attempts/:id` | 单条作答；`include=process` 带上该题推演 |
 | GET | `/api/redo` | 待重做台账（`redo_status` 非空），带 `resolved` 标记 |
 | GET | `/api/backups` | 快照列表（时间、原因、行数、sha256、体积） |
+| GET/POST | `/api/sql` | 只读 SQL，**需 token**；`format=csv` 直接出 CSV，`maxRows` 调上限。见 [sql.md §1.1](sql.md) |
 
-只读接口不需要 token，也不需要写模式。
+只读接口不需要 token，也不需要写模式——**`/api/sql` 是唯一例外**。
+
+
+| | 数据来源 | 口径 | 用途 |
+|---|---|---|---|
+| `/api/meta` | 直接查库（`buildMeta`） | 库行数、判定三态、计时分布 | 数据自检、脚本核对 |
+
+所以它和页面必然同源：写完库 → 重建页表 → 两者的数字一起变，不存在两个口径。
+加 `?section=stats|volumes|knowledge|days|weeks|countdown|meta|today|warnings` 只取一节（整份约 96 KB）。
+
+`/api/sql` 之所以也要 token：一条 `select * from attempts` 就能把整库导走，敏感度和写一样。
+它的语句由子进程里的 `server/sqlrun.mjs` 执行（与 SSH 那条路同一份代码），
+所以闸门完全一致：只读连接、单条语句、只读关键字、行数上限；跑超 20s 直接 SIGKILL 并返回 `408`。
+放在子进程里而不是请求里跑，是因为 `node:sqlite` 是同步驱动——一条不收敛的查询会把页面服务一起卡住。
 
 ## 4. 写接口
 
@@ -332,13 +346,15 @@ backups/<YYYYMMDD-HHMMSS>-<原因>/
 | 409 | `question_in_use` / `question_referenced` | 题被作答引用 / 被重练题 origin 引用 |
 | 409 | `paper_not_empty` / `paper_file_in_use` | 卷里还有题或场次 / 原文页下还有题 |
 | 413 | `body_too_large` | 超过 2 MB |
+| 400 | `bad_request` / `bad_sql` / `exec_failed` | `/api/sql`：写语句或多语句被拒 / 语法或表名错 / 执行失败 |
+| 408 | `timeout` | `/api/sql`：查询 20s 未收敛，子进程已被终止 |
 | 500 | `internal` | 其它 |
 
 ## 7. 验证方式
 
 ```bash
-node server/test-write-api.mjs     # 102 项：鉴权、创建、校验、事务性、订正、销账、撤销、
-                                   #        场次订正、补录/撤销单题、题库读写、备份、导出、正式库保护
+node server/test-write-api.mjs     # 118 项：鉴权、创建、校验、事务性、订正、销账、撤销、
+                                   #         场次订正、补录/撤销单题、题库读写、备份、导出、只读 SQL、正式库保护
 node scripts/compare-export.mjs    # Node 导出器与 Python 导出器逐字段 + 键顺序比对
 node server/smoke-test.mjs         # 只读链路 19 项回归（需 8137 在跑）
 ```
