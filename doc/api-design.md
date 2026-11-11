@@ -1,7 +1,8 @@
 # 写接口设计（API v1）
 
 > 依据：`doc/database-design.md` §5「一次录入 = 一个事务」、§9 数据特例。
-> 实现：`server/write.mjs`（业务）、`server/routes.mjs`（分发）、`server/read-api.mjs`（只读上下文）。
+> 实现：`server/write.mjs`（场次/作答）、`server/catalog.mjs`（试卷/题目）、
+> `server/backup.mjs`（写前快照）、`server/routes.mjs`（分发）、`server/read-api.mjs`（只读上下文）。
 
 ## 1. 为什么要有写接口
 
@@ -41,6 +42,7 @@ token 从环境变量 `MEM_WRITE_TOKEN` 读取（≥16 字符），不写进配�
 | GET | `/api/attempts` | 支持 `questionId` / `redoStatus` / `include=process` |
 | GET | `/api/attempts/:id` | 单条作答；`include=process` 带上该题推演 |
 | GET | `/api/redo` | 待重做台账（`redo_status` 非空），带 `resolved` 标记 |
+| GET | `/api/backups` | 快照列表（时间、原因、行数、sha256、体积） |
 
 只读接口不需要 token，也不需要写模式。
 
@@ -188,6 +190,93 @@ POST /api/export
 把库重新导出成 `index.json` + `content.json`（路径由配置决定）。返回覆盖数。
 页面不会自动重建——线上由 `apply-data.sh` / `deploy.sh` 那一套负责，本地由 `./dev.sh`。
 
+### 4.9 试卷
+
+```
+POST /api/papers
+PATCH /api/papers/:slug
+DELETE /api/papers/:slug
+```
+
+新建只建「空卷」，题目用 `/api/questions` 一道道加：
+
+```json
+{ "slug": "2026-exam", "title": "2026 管综真题", "subject": "管综",
+  "scoreRule": { "objective": 3, "subjective": { "essay1": 30, "essay2": 35 } },
+  "paperFile": "2026年管综真题/paper.md",
+  "paperPrefix": "# 2026 年全国硕士研究生招生考试\n\n## 一、问题求解…" }
+```
+
+| 字段 | 说明 |
+|---|---|
+| `slug` | 必填，小写字母/数字/连字符；创建后不可改（被题与场次引用） |
+| `title` / `subject` | 标题、科目 |
+| `scoreRule` | 分值规则对象，原样存 `score_rule_json` |
+| `paperFile` / `paperPrefix` | 可选：原文页路径与页头。`content.json` 的「原文」页由这两者决定 |
+| `sourceFiles` | 可选：该卷涉及的原始文件清单 |
+
+`PATCH` 可改 `title` / `subject` / `scoreRule` / `note` / `questionCount` /
+`paperFile`+`paperPrefix`（加或改一页原文）/ `removePaperFile`（删原文页，页下还有题则 409）/
+`sourceFiles`。
+
+`DELETE` 只允许删**空卷**：卷里还有题或场次 → 409 `paper_not_empty` 并返回各自数量。
+
+### 4.10 题目
+
+```
+POST /api/questions
+PATCH /api/questions/:id
+DELETE /api/questions/:id
+```
+
+```json
+{ "paperSlug": "2026-exam", "type": "problem", "topicId": "math.profit",
+  "topic": "问题求解",
+  "contentMd": "**1.** 某商品进价 100 元…\n\nA. 30%　B. 50%　C. 60%　D. 80%　E. 100%\n",
+  "answer": "B" }
+```
+
+| 字段 | 必填 | 默认 / 规则 |
+|---|---|---|
+| `paperSlug` | 是 | 卷必须存在 |
+| `type` | 是 | `problem` / `data-sufficiency` / `logic` / `cloze` / `reading` / `new-type` / `translation` / `writing` / `essay` |
+| `topicId` | 是 | **必须在 `volumes.json` 知识树里**，否则 400 `unknown_topic` |
+| `topic` | 是 | 展示用中文标签（如「问题求解」），与知识点名不是一回事 |
+| `contentMd` | 是 | 题干 Markdown；不含 `<a id="<id>"></a>` 会自动补在末尾 |
+| `answer` | 否 | 不传 = 未定；`scorable` 默认「有答案才是 1」 |
+| `scorable` | 否 | 0 / 1 / 布尔 |
+| `number` | 否 | 默认卷内最大题号 + 1（同一题号可重复，顺序看 `seq`） |
+| `seq` | 否 | 默认卷尾 + 1；显式指定时把后面同卷的题整体后移 |
+| `id` | 否 | 默认 `<slug>-q001` 形式，重名自动顺延；也可显式给 |
+| `paperFile` | 否 | 默认继承卷内最后一题；该卷有 `paperPrefix` 时必须命中其中一个键，否则 400 `unknown_paper_file` |
+| `section` / `answerSource` / `revision` / `origin` / `note` | 否 | 前三个默认继承卷内最后一题 |
+
+`PATCH` 可改上述除 `id`、`paperSlug` 外的一切。改 `answer` 时如果该题已有作答，
+响应里带 `warnings`：**历史判定不会自动重判**，要重判得逐条 `PATCH /api/attempts/:id`。
+
+`DELETE` 有保护：题被作答引用 → 409 `question_in_use`（返回条数）；被重练题 `origin` 引用 →
+409 `question_referenced`。删成功后按库内实际值重算卷的 `question_ids` / `question_count`。
+
+### 4.11 备份
+
+```
+GET  /api/backups    列出快照（只读，不需要 token）
+POST /api/backups    手动打一份快照（需写模式 + token）
+```
+
+写模式进程在**每次写库之前**自动打一份快照（`backup.beforeWrite`，默认开），
+所以「改坏了」永远有上一版可退。快照目录：
+
+```
+backups/<YYYYMMDD-HHMMSS>-<原因>/
+  mem.db          VACUUM INTO 出来的一致性副本
+  volumes.json    知识树（不在库里，单独留一份）
+  meta.json       时间、行数、sha256
+```
+
+保留份数由 `backup.keep` 决定（默认 20）。**恢复不提供 HTTP 接口**——要停服务换文件，
+用命令行 `./scripts/restore.sh <备份目录>`。
+
 ## 5. 数据契约：写接口必须守的两条
 
 ### 5.1 `notes` 是 JSON 信封
@@ -199,7 +288,8 @@ POST /api/export
 |---|---|
 | `sessions.note` | `file`、`frontMatter` |
 | `attempts.notes` | `source`、`errorTags`、`errorNote`、`durationMin`、`durationSource` |
-| `questions.notes` | `paper`、`section`、`revision`、`answerSource`（写接口不建题，仅读） |
+| `questions.notes` | `paper`、`section`、`revision`、`answerSource` |
+| `papers.notes` | `sourceFiles`、`paperPrefix`（键为原文页路径，值为页头） |
 
 ### 5.2 `process_md` 要带「场次全文」标记
 
@@ -229,14 +319,18 @@ POST /api/export
 | 409 | `not_yet_correct` | 未做对却要销账 |
 | 409 | `no_fulltext_carrier` / `fulltext_missing` | 场次没有作答承载正文 / 正文标记对不上 |
 | 400 | `last_attempt` | 要删场次最后一条作答 |
+| 400 | `unknown_topic` / `unknown_paper_file` | 知识点不在知识树 / 原文页不属于该卷 |
+| 409 | `paper_exists` / `question_exists` | 卷 / 题 id 已存在 |
+| 409 | `question_in_use` / `question_referenced` | 题被作答引用 / 被重练题 origin 引用 |
+| 409 | `paper_not_empty` / `paper_file_in_use` | 卷里还有题或场次 / 原文页下还有题 |
 | 413 | `body_too_large` | 超过 2 MB |
 | 500 | `internal` | 其它 |
 
 ## 7. 验证方式
 
 ```bash
-node server/test-write-api.mjs     # 74 项：鉴权、创建、校验、事务性、订正、销账、撤销、
-                                   #        场次订正、补录单题、撤销单题、导出、正式库保护
+node server/test-write-api.mjs     # 102 项：鉴权、创建、校验、事务性、订正、销账、撤销、
+                                   #        场次订正、补录/撤销单题、题库读写、备份、导出、正式库保护
 node scripts/compare-export.mjs    # Node 导出器与 Python 导出器逐字段 + 键顺序比对
 node server/smoke-test.mjs         # 只读链路 19 项回归（需 8137 在跑）
 ```
@@ -248,8 +342,11 @@ node server/smoke-test.mjs         # 只读链路 19 项回归（需 8137 在跑
 
 | 没做 | 原因 |
 |---|---|
-| 题目/试卷写入 | 加题要同时定知识点、答案来源、卷内顺序，容易把 328 题的既有口径改坏；先只读 |
-| 审计日志（谁在何时改了什么） | 单用户场景价值低；真要多端再补 `change_log` 表 |
+| 改卷内题的归属（`paperSlug`） | 换卷会让原文页、卷题量、场次外键同时错位；要换就删了重建 |
+| 知识点树写入 | 知识树在 `volumes.json`（文件），改它要连带调整 `topicAliases` / `mathTopics`，不适合走 HTTP |
+| 删除有引用的题 / 非空卷 | 会连带毁掉历史场次；宁可让人先清场次，也不做级联删 |
+| 恢复接口 | 恢复要停服务换文件，只能命令行 `scripts/restore.sh` |
+| 审计日志（谁在何时改了什么） | 单用户场景价值低；写前快照已能回答「改坏了怎么退」 |
 | 乐观锁 / 版本号 | 单人使用，后写覆盖先写即可接受 |
-| 批量导入 | 一次性迁移已由 `migrate.py` 完成，日常一场一场录更贴近真实使用 |
+| 批量导入 | 一次性迁移已由 `migrate.py` 完成；批量建档请直接写脚本调本接口 |
 | 写接口的限流 | 只监听回环 + nginx 反代 + token，暂不加 |

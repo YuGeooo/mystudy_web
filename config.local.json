@@ -3,5 +3,10 @@
   "port": 8137,
   "database": "data/mem.db",
   "timeZone": "Asia/Shanghai",
-  "readOnly": true
+  "readOnly": true,
+  "backup": {
+    "dir": "backups",
+    "keep": 30,
+    "beforeWrite": true
+  }
 }

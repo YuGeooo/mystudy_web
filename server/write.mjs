@@ -27,11 +27,11 @@ const FULLTEXT_MARK = '===== 场次全文：';
 // 与 Python 侧 jdump 等价：紧凑分隔符、不排序、保留中文。
 const jdump = (obj) => JSON.stringify(obj);
 
-function envelope(text, baseline) {
+export function envelope(text, baseline) {
   return jdump({ text: text ?? null, baseline });
 }
 
-function unenvelope(raw) {
+export function unenvelope(raw) {
   if (!raw) return { text: null, baseline: {} };
   try {
     const obj = JSON.parse(raw);
@@ -41,7 +41,7 @@ function unenvelope(raw) {
   }
 }
 
-const nowIso = () => new Date().toISOString().replace(/\.\d{3}Z$/, '+00:00');
+export const nowIso = () => new Date().toISOString().replace(/\.\d{3}Z$/, '+00:00');
 
 function mark(correct) {
   if (correct === 1) return '✅';
@@ -51,21 +51,21 @@ function mark(correct) {
 
 // ---------------------------------------------------------------- 校验工具
 
-function needString(v, field, { allowEmpty = false } = {}) {
+export function needString(v, field, { allowEmpty = false } = {}) {
   if (typeof v !== 'string') throw new ApiError(400, 'invalid_field', `${field} 必须是字符串`);
   const s = v.trim();
   if (!allowEmpty && !s) throw new ApiError(400, 'invalid_field', `${field} 不能为空`);
   return s;
 }
 
-function asBoolInt(v, field) {
+export function asBoolInt(v, field) {
   if (v === undefined || v === null) return null;
   if (v === true || v === 1 || v === '1') return 1;
   if (v === false || v === 0 || v === '0') return 0;
   throw new ApiError(400, 'invalid_field', `${field} 只能是布尔 / 0 / 1`);
 }
 
-function asNumberOrNull(v, field) {
+export function asNumberOrNull(v, field) {
   if (v === undefined || v === null || v === '') return null;
   const n = Number(v);
   if (!Number.isFinite(n)) throw new ApiError(400, 'invalid_field', `${field} 必须是数字`);

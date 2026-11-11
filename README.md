@@ -1,6 +1,6 @@
 # mem_new
 
-MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）与线上部署（P4）均已跑通，写接口（P5）已实现但默认关闭。线上：<https://geyuqi.me/study/>。
+MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）与线上部署（P4）均已跑通，写接口（P5）增删改查齐全、默认关闭，写库前自动快照。线上：<https://geyuqi.me/study/>。
 
 ## 当前状态
 
@@ -82,6 +82,8 @@ Ctrl+C && ./dev.sh     # 自动同步 + 重建 171 个页面 + 起服务
 | 契约 | [doc/api-design.md](doc/api-design.md) |
 | 写入 | 增 `POST /api/sessions`（场次+逐题，单事务）· 改 `PATCH /api/sessions/:id`（日期/时长/备注/文件路径/正文）· 补 `POST /api/sessions/:id/attempts` · 删 `DELETE /api/sessions/:id` / `DELETE /api/attempts/:id`（最后一条不许删） |
 | 判定 | `PATCH /api/attempts/:id` · `POST /api/attempts/:id/resolve` |
+| 题库 | `POST/PATCH/DELETE /api/papers[/:slug]` · `POST/PATCH/DELETE /api/questions[/:id]`（知识点、原文页、删除引用都有校验） |
+| 备份 | 写库前自动快照 · `GET /api/backups` 列快照 · `POST /api/backups` 手动打一份 |
 | 导出 | `POST /api/export`（Node 版导出器，服务器不需要 Python） |
 | 只读补充 | `/api/papers` · `/api/questions`（含题干全文检索）· `/api/sessions` · `/api/attempts` · `/api/attempts/:id` · `/api/redo` |
 | 开关 | `write.enabled=true` + `MEM_WRITE_TOKEN`（≥16 字符）+ 连接可写，缺一不可 |
@@ -90,12 +92,37 @@ Ctrl+C && ./dev.sh     # 自动同步 + 重建 171 个页面 + 起服务
 验证（不碰正式库）：
 
 ```bash
-node server/test-write-api.mjs    # 74 项：鉴权/创建/校验/事务性/订正/销账/场次订正/单题增删/导出/正式库保护
+node server/test-write-api.mjs    # 102 项：鉴权/创建/校验/事务性/订正/销账/场次订正/单题增删/题库读写/备份/导出/正式库保护
 node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段值与键顺序逐项比对
 ```
 
 `test-write-api.mjs` 用 `sqlite3 .backup` 从 `mem.db` 只读复制出 `data/test.db`，
 跑前记录正式库与 `data/index.json` 的 sha256 + mtime，跑完复查一致才通过。
+
+## 备份与恢复
+
+改数据有退路，分四层，越往下越保命：
+
+| 层 | 触发 | 位置 | 保留 |
+|---|---|---|---|
+| 写前快照 | 每次调写接口之前**自动** | 本机 `backups/<TS>-<方法>-<资源>/` | 最近 20 份（`backup.keep`） |
+| 本机手动备份 | `./scripts/backup.sh` | 同上 | 最近 30 份（`KEEP=30` 可改） |
+| 线上每日备份 | 每天 03:30（`mem-backup.timer`） | 服务器 `/www/backup/<YYYYMMDD>/` | 14 天 |
+| 线上页面版本 | 每次构建 | `/www/releases/<TS>` | 最近 5 份 |
+
+一份快照就是一个目录：`mem.db`（SQLite `VACUUM INTO` 出来的一致性副本，WAL 也带上）+
+`volumes.json`（知识树不在库里，单独留）+ `meta.json`（时间、四表行数、sha256）。
+
+```bash
+./scripts/backup.sh                                  # 手动备一份
+curl -s 127.0.0.1:8137/api/backups | head -40        # 看有哪些快照
+./scripts/restore.sh backups/20261111-193012-post-questions
+./scripts/restore.sh <目录> --volumes                # 连知识树一起退回
+```
+
+恢复有三道保险：先校验备份完整性；当前库先另存 `*-before-restore`（恢复也能反悔）；
+8137 有服务在跑时直接拒绝（进程握着旧文件句柄，换文件等于白换），确认无妨加 `FORCE=1`。
+恢复完自动跑 `sync.sh` 重建 JSON 契约。
 
 ## 日常操作
 

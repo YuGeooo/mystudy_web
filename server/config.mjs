@@ -51,6 +51,13 @@ const volumesPath = path.resolve(
   ROOT, process.env.MEM_VOLUMES || raw.volumes || path.join('data', 'volumes.json')
 );
 
+// ---- 备份 ----
+// 写接口每次写库前自动快照，改坏了能退回去。只读进程不做备份。
+const backupCfg = raw.backup || {};
+const backupDir = path.resolve(ROOT, process.env.MEM_BACKUP_DIR || backupCfg.dir || 'backups');
+const backupKeep = Number.isInteger(backupCfg.keep) && backupCfg.keep > 0 ? backupCfg.keep : 20;
+const backupBeforeWrite = backupCfg.beforeWrite !== false;
+
 export default {
   ...raw,
   root: ROOT,
@@ -60,6 +67,9 @@ export default {
   volumesPath,
   exportIndexPath,
   exportContentPath,
+  backupDir,
+  backupKeep,
+  backupBeforeWrite,
   writeEnabled,
   writeToken: hasToken ? writeToken : null,
   // 数据库连接是否只读：写模式开启才允许读写。

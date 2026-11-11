@@ -103,6 +103,9 @@ const testDbStat = stat(path.join(ROOT, 'data/test.db'));
 assert.ok(testDbStat.size > 1000, '测试库未生成');
 console.log(`  测试库 ${(testDbStat.size / 1024 / 1024).toFixed(1)} MB`);
 
+// 每次从空目录开始数快照，避免上一轮的残留影响 keep 断言
+fs.rmSync(path.join(ROOT, 'data/test-backups'), { recursive: true, force: true });
+
 console.log('\n=== 1. 起写模式服务（8138）===');
 const child = spawn(process.execPath, ['server/dev.mjs'], {
   cwd: ROOT,
@@ -514,8 +517,170 @@ try {
     assert.equal(afterCleanup.coverage.attempts, baseAttempts);
   });
 
+  // ---- 题库写入（卷 / 题）与备份 ----
+  console.log('\n=== 9. 题库写入与备份 ===');
+  const NEW_SLUG = 'test-paper-2026';
+  const NEW_FILE = 'TEST2026/paper.md';
+
+  const mkPaper = await api('POST', '/api/papers', {
+    slug: NEW_SLUG, title: '2026 测试卷', subject: '管综',
+    scoreRule: { objective: 3 },
+    paperFile: NEW_FILE, paperPrefix: '# 2026 测试卷\n\n## 一、问题求解\n\n',
+    note: '接口验收用，跑完即删',
+  });
+  check('POST /api/papers → 201', () => assert.equal(mkPaper.status, 201));
+
+  const papers9 = (await api('GET', '/api/papers', undefined, { token: null })).body.papers;
+  check('新卷出现在卷列表且题量为 0', () => {
+    const p = papers9.find((x) => x.slug === NEW_SLUG);
+    assert.ok(p, '新卷没进列表');
+    assert.equal(p.questionCount, 0);
+  });
+
+  const mkQ = await api('POST', '/api/questions', {
+    paperSlug: NEW_SLUG, type: 'problem', topicId: 'math.profit', topic: '问题求解',
+    contentMd: '**1.** 某商品进价 100 元，售价 150 元，利润率是多少？\n\nA. 30%　B. 50%　C. 60%　D. 80%　E. 100%\n',
+    answer: 'B',
+  });
+  check('POST /api/questions → 201 且自动生成 id', () => {
+    assert.equal(mkQ.status, 201);
+    assert.equal(mkQ.body.id, `${NEW_SLUG}-q001`);
+    assert.equal(mkQ.body.seq, 1);
+  });
+
+  const q9 = (await api('GET', `/api/questions/${mkQ.body.id}`, undefined, { token: null })).body;
+  check('题干自动补锚点，知识点解析成中文路径', () => {
+    assert.ok(q9.contentMd.includes(`id="${mkQ.body.id}"`), '缺少锚点');
+    assert.equal(q9.topicId, 'math.profit');
+    assert.equal(q9.answer, 'B');
+    assert.equal(q9.scorable, true);
+  });
+
+  const paper9 = (await api('GET', `/api/papers/${NEW_SLUG}`, undefined, { token: null })).body;
+  check('卷的题目清单与题量同步', () => {
+    assert.equal(paper9.questionCount, 1);
+    assert.deepEqual(paper9.questionIds, [mkQ.body.id]);
+    assert.equal(paper9.questions.length, 1);
+  });
+
+  const mkQ2 = await api('POST', '/api/questions', {
+    paperSlug: NEW_SLUG, type: 'problem', topicId: 'math.ratio', topic: '问题求解',
+    contentMd: '**2.** 甲乙速度比 3:2，同时出发，甲到时乙还剩 30 公里，全程多少？\n\nA. 60　B. 75　C. 90　D. 100　E. 120\n',
+    answer: 'C',
+  });
+  check('第二题顺序号自动接上', () => assert.equal(mkQ2.body.seq, 2));
+
+  await api('POST', '/api/export', {});
+  const idx9 = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/test-index.json'), 'utf8'));
+  const content9 = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/test-content.json'), 'utf8'));
+  check('新题进了 index.json，带知识点路径', () => {
+    const q = idx9.questions.find((x) => x.id === mkQ.body.id);
+    assert.ok(q, '新题没进导出物');
+    assert.deepEqual(q.topicPath, ['管综数学', '商品利润']);
+    assert.equal(q.volume, NEW_SLUG);
+  });
+  check('新题题干拼进原文页', () => {
+    assert.ok(content9.papers[NEW_FILE], '原文页缺失');
+    assert.ok(content9.papers[NEW_FILE].includes('利润率'), '题干没进原文页');
+    assert.ok(content9.papers[NEW_FILE].startsWith('# 2026 测试卷'), '原文页头丢失');
+  });
+
+  const pq = await api('PATCH', `/api/questions/${mkQ.body.id}`, { answer: 'C', section: '一、问题求解' });
+  check('PATCH 题目 → 200', () => {
+    assert.equal(pq.status, 200);
+    assert.deepEqual(pq.body.warnings, []);
+  });
+  const q9b = (await api('GET', `/api/questions/${mkQ.body.id}`, undefined, { token: null })).body;
+  check('答案与小节已更新', () => {
+    assert.equal(q9b.answer, 'C');
+    assert.equal(q9b.section, '一、问题求解');
+  });
+
+  const badTopic = await api('PATCH', `/api/questions/${mkQ.body.id}`, { topicId: 'math.nope' });
+  check('改不存在的知识点 → 400 unknown_topic', () => {
+    assert.equal(badTopic.status, 400);
+    assert.equal(badTopic.body.code, 'unknown_topic');
+  });
+  const badTopicNew = await api('POST', '/api/questions', {
+    paperSlug: NEW_SLUG, type: 'problem', topicId: 'math.nope', topic: '问题求解', contentMd: 'x',
+  });
+  check('新建时知识点不存在 → 400 unknown_topic', () => assert.equal(badTopicNew.status, 400));
+  const badFile = await api('POST', '/api/questions', {
+    paperSlug: NEW_SLUG, type: 'problem', topicId: 'math.profit', topic: '问题求解',
+    contentMd: 'x', paperFile: '不存在/paper.md',
+  });
+  check('原文页不属于该卷 → 400 unknown_paper_file', () => {
+    assert.equal(badFile.status, 400);
+    assert.equal(badFile.body.code, 'unknown_paper_file');
+  });
+  const badPaper2 = await api('POST', '/api/questions', {
+    paperSlug: 'not-a-paper', type: 'problem', topicId: 'math.profit', topic: '问题求解', contentMd: 'x',
+  });
+  check('往不存在的卷加题 → 400 unknown_paper', () => assert.equal(badPaper2.body.code, 'unknown_paper'));
+  const patchQBad = await api('PATCH', `/api/questions/${mkQ.body.id}`, { paperSlug: '2020-exam' });
+  check('题目换卷 → 400 unknown_field', () => {
+    assert.equal(patchQBad.status, 400);
+    assert.equal(patchQBad.body.code, 'unknown_field');
+  });
+
+  const delInUse = await api('DELETE', '/api/questions/2024-exam-q001');
+  check('删有作答的题 → 409 question_in_use', () => {
+    assert.equal(delInUse.status, 409);
+    assert.equal(delInUse.body.code, 'question_in_use');
+  });
+  const delPaperFull = await api('DELETE', '/api/papers/2024-exam');
+  check('删非空卷 → 409 paper_not_empty', () => {
+    assert.equal(delPaperFull.status, 409);
+    assert.equal(delPaperFull.body.code, 'paper_not_empty');
+  });
+
+  const pp = await api('PATCH', `/api/papers/${NEW_SLUG}`, { title: '2026 测试卷（改）', note: '改过了' });
+  check('PATCH 试卷 → 200', () => assert.equal(pp.status, 200));
+  const paper9b = (await api('GET', `/api/papers/${NEW_SLUG}`, undefined, { token: null })).body;
+  check('卷标题已更新', () => assert.equal(paper9b.title, '2026 测试卷（改）'));
+  const ppBad = await api('PATCH', `/api/papers/${NEW_SLUG}`, { slug: 'x' });
+  check('改卷 slug → 400 unknown_field', () => assert.equal(ppBad.body.code, 'unknown_field'));
+
+  const dq1 = await api('DELETE', `/api/questions/${mkQ2.body.id}`);
+  const dq2 = await api('DELETE', `/api/questions/${mkQ.body.id}`);
+  check('删无引用的题 → 200 且题量递减', () => {
+    assert.equal(dq1.status, 200);
+    assert.equal(dq1.body.questionCount, 1);
+    assert.equal(dq2.body.questionCount, 0);
+  });
+  const dp = await api('DELETE', `/api/papers/${NEW_SLUG}`);
+  check('删空卷 → 200', () => assert.equal(dp.status, 200));
+  const dpAgain = await api('DELETE', `/api/papers/${NEW_SLUG}`);
+  check('重复删卷 → 404', () => assert.equal(dpAgain.status, 404));
+
+  // 备份
+  const bl = await api('GET', '/api/backups', undefined, { token: null });
+  check('GET /api/backups → 200 且有写前快照', () => {
+    assert.equal(bl.status, 200);
+    assert.ok(bl.body.backups.length > 0, '没有任何快照');
+    assert.ok(
+      bl.body.backups.some((b) => String(b.reason || '').includes('questions')),
+      '没有写前自动快照'
+    );
+  });
+  check('快照数量受 keep 限制（5）', () => assert.ok(bl.body.backups.length <= 5));
+
+  const manual = await api('POST', '/api/backups', {});
+  check('POST /api/backups → 201 且记录行数', () => {
+    assert.equal(manual.status, 201);
+    assert.ok(manual.body.rows.questions > 300);
+    assert.ok(fs.existsSync(path.join(ROOT, manual.body.dir, 'mem.db')), '快照文件没落盘');
+  });
+  const backupCheck = await sh('sqlite3', [
+    path.join(ROOT, manual.body.dir, 'mem.db'), 'PRAGMA integrity_check;',
+  ]);
+  check('快照可打开且完整性检查通过', () => assert.equal(backupCheck.trim(), 'ok'));
+
+  const afterLib = (await api('GET', '/api/meta', undefined, { token: null })).body;
+  check('题库用例跑完题目数回到基线', () => assert.equal(afterLib.coverage.questions, 328));
+
   // ---- 导出联动 ----
-  console.log('\n=== 9. 导出联动 ===');
+  console.log('\n=== 10. 导出联动 ===');
   const again = await api('POST', '/api/sessions', { ...createBody, sessionId: undefined });
   const exportRes = await api('POST', '/api/export', {});
   check('POST /api/export → 200', () => assert.equal(exportRes.status, 200));
@@ -557,7 +722,7 @@ try {
 
 // ---------------------------------------------------------------- 正式库保护
 
-console.log('\n=== 10. 正式库保护 ===');
+console.log('\n=== 11. 正式库保护 ===');
 const after = { db: stat(FORMAL_DB), index: stat(FORMAL_INDEX) };
 check('data/mem.db 未被触碰（sha256 + mtime 一致）', () => {
   assert.equal(after.db.hash, before.db.hash, '正式库内容变了');
@@ -567,7 +732,7 @@ check('data/index.json 未被触碰', () => {
   assert.equal(after.index.hash, before.index.hash, '正式导出物被覆盖了');
 });
 
-console.log('\n=== 11. 只读进程仍然拒绝写入 ===');
+console.log('\n=== 12. 只读进程仍然拒绝写入 ===');
 // 8137 可能已被 ./dev.sh 占着（只读配置），这时直接复用它，不再起第二个进程
 async function healthAt(port) {
   try {

@@ -6,6 +6,10 @@ import { todayLocal } from './dates.mjs';
 import { serveStatic } from './static.mjs';
 import * as read from './read-api.mjs';
 import { ApiError, createSession, patchSession, addAttempt, patchAttempt, resolveRedo, deleteSession, deleteAttempt } from './write.mjs';
+import {
+  createPaper, patchPaper, deletePaper, createQuestion, patchQuestion, deleteQuestion,
+} from './catalog.mjs';
+import { snapshot, listBackups } from './backup.mjs';
 import { exportAll } from './export.mjs';
 
 const MAX_BODY = 2 * 1024 * 1024;
@@ -66,7 +70,7 @@ const q = (url, key) => url.searchParams.get(key) || null;
 
 // 只有这几个前缀是可写端点。只读进程对它们返回 404（不暴露能力），
 // 对其余路径的非 GET 仍返回 405（确实是方法用错了）。
-const WRITABLE_ROOTS = new Set(['sessions', 'attempts', 'export']);
+const WRITABLE_ROOTS = new Set(['sessions', 'attempts', 'export', 'papers', 'questions', 'backups']);
 
 export async function handle(req, res) {
   const url = new URL(req.url, `http://${config.host}:${config.port}`);
@@ -103,6 +107,12 @@ export async function handle(req, res) {
       }
       requireAuth(req);
 
+      // 写库前先留快照：题/卷改动最容易一键改坏，没有退路就不动数据。
+      // 导出与手动备份本身不写库，跳过。
+      if (config.backupBeforeWrite && a !== 'export' && a !== 'backups') {
+        snapshot(`${method}-${a}`);
+      }
+
       if (method === 'POST' && a === 'sessions' && !b) {
         const body = await readBody(req);
         return send(res, 201, { ok: true, ...createSession(body) });
@@ -132,12 +142,40 @@ export async function handle(req, res) {
       if (method === 'POST' && a === 'export' && !b) {
         return send(res, 200, { ok: true, ...exportAll(config) });
       }
+      if (method === 'POST' && a === 'backups' && !b) {
+        return send(res, 201, { ok: true, ...snapshot('manual') });
+      }
+      if (method === 'POST' && a === 'papers' && !b) {
+        const body = await readBody(req);
+        return send(res, 201, { ok: true, ...createPaper(body) });
+      }
+      if (method === 'PATCH' && a === 'papers' && b && !c) {
+        const body = await readBody(req);
+        return send(res, 200, { ok: true, ...patchPaper(b, body) });
+      }
+      if (method === 'DELETE' && a === 'papers' && b && !c) {
+        return send(res, 200, { ok: true, ...deletePaper(b) });
+      }
+      if (method === 'POST' && a === 'questions' && !b) {
+        const body = await readBody(req);
+        return send(res, 201, { ok: true, ...createQuestion(body) });
+      }
+      if (method === 'PATCH' && a === 'questions' && b && !c) {
+        const body = await readBody(req);
+        return send(res, 200, { ok: true, ...patchQuestion(b, body) });
+      }
+      if (method === 'DELETE' && a === 'questions' && b && !c) {
+        return send(res, 200, { ok: true, ...deleteQuestion(b) });
+      }
       return send(res, 405, {
         error: 'method not allowed', method, path: url.pathname,
         hint: '可写端点：POST /api/sessions · PATCH /api/sessions/:id · ' +
           'POST /api/sessions/:id/attempts · DELETE /api/sessions/:id · ' +
           'PATCH /api/attempts/:id · DELETE /api/attempts/:id · ' +
-          'POST /api/attempts/:id/resolve · POST /api/export',
+          'POST /api/attempts/:id/resolve · ' +
+          'POST /api/papers · PATCH /api/papers/:slug · DELETE /api/papers/:slug · ' +
+          'POST /api/questions · PATCH /api/questions/:id · DELETE /api/questions/:id · ' +
+          'POST /api/export · POST /api/backups',
       });
     }
 
@@ -214,6 +252,14 @@ export async function handle(req, res) {
         }),
       });
     }
+    if (a === 'backups') {
+      return send(res, 200, {
+        keep: config.backupKeep,
+        beforeWrite: config.backupBeforeWrite,
+        backups: listBackups(),
+        restore: 'scripts/restore.sh <备份目录>（恢复需停服务，故不提供 HTTP 接口）',
+      });
+    }
     if (a === 'redo') return send(res, 200, { redo: read.listRedo() });
 
     return send(res, 404, {
@@ -224,6 +270,7 @@ export async function handle(req, res) {
         'GET /api/questions', 'GET /api/questions/:id',
         'GET /api/sessions', 'GET /api/sessions/:id',
         'GET /api/attempts', 'GET /api/attempts/:id', 'GET /api/redo',
+        'GET /api/backups',
       ],
     });
   } catch (err) {

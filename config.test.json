@@ -10,5 +10,10 @@
   "export": {
     "index": "data/test-index.json",
     "content": "data/test-content.json"
+  },
+  "backup": {
+    "dir": "data/test-backups",
+    "keep": 5,
+    "beforeWrite": true
   }
 }
