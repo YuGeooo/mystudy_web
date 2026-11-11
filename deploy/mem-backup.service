@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up mem data (SQLite + JSON)
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+ExecStart=/www/builder/backup-db.sh

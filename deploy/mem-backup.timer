@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily mem data backup at 03:30
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=300
+Persistent=true
+Unit=mem-backup.service
+
+[Install]
+WantedBy=timers.target

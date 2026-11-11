@@ -29,6 +29,8 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
 - **P4 已上线**：<https://geyuqi.me/study/>（页面）与 `/api/*`（只读接口）。
   线上细节见 [deploy/README.md](deploy/README.md)；服务器脚本副本在 [deploy/](deploy/)。
   站点仓库 `/Users/geyuqi/Documents/aliyun/myWebsite/` **一行未改**，线上仍用它的渲染器与样式。
+- **加固**：本仓库已纳入 git（`data/mem.db` 与导出 JSON 不入库，见 `.gitignore`）；
+  线上 `mem-backup.timer` 每天 03:30 备份 `mem.db` 与三份 JSON 到 `/www/backup/`，保留 14 天，备份后自动校验。
 
 ## v1 → v2 的关键变化
 

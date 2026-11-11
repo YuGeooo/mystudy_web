@@ -23,6 +23,7 @@
   apply-data.sh             原子替换数据 + 重启 API + 触发重建
 /www/releases/<TS>/         每次构建一份，保留最近 5 份
 /www/site -> /www/releases/<TS>   当前线上版本（软链）
+/www/backup/<YYYYMMDD>/     每日备份（mem.db + 三份 JSON），保留 14 天
 ```
 
 ## 数据流
@@ -73,6 +74,39 @@ ssh root@121.89.87.48 'journalctl -u mem-api -n 30 --no-pager'
 5. 健康检查失败自动切回上一份 release
 
 无变化时 5 分钟内直接退出，开销仅为一次 `git fetch` 与几次 `sha256sum`。
+
+## 备份
+
+`mem-backup.timer` 每天 03:30（±5 分钟随机延迟）执行 `backup-db.sh`：
+
+- `sqlite3 .backup` 热备份（对只读连接安全，不需要停服务）
+- 同时拷走 `index.json` / `content.json` / `volumes.json`，保证四份文件属于同一时点
+- 备份后跑 `PRAGMA integrity_check`，失败则删掉本次备份并报错退出
+- 保留最近 14 份，即 `KEEP=14`
+
+手动触发与检查：
+
+```bash
+ssh root@121.89.87.48 'systemctl start mem-backup.service'
+ssh root@121.89.87.48 'journalctl -u mem-backup -n 10 --no-pager'
+ssh root@121.89.87.48 'ls -lh /www/backup/'
+```
+
+从备份恢复：
+
+```bash
+ssh root@121.89.87.48 '
+  D=$(ls -1dt /www/backup/20* | head -1)
+  systemctl stop mem-api
+  rm -f /www/data/mem.db-wal /www/data/mem.db-shm
+  cp "$D"/mem.db "$D"/index.json "$D"/content.json "$D"/volumes.json /www/data/
+  chown deploy:deploy /www/data/*
+  systemctl start mem-api
+  systemctl start geyuqi-deploy.service
+'
+```
+
+注意：备份在**同一台服务器**上，只防误操作与文件损坏，不防机器故障。真正的异地副本要靠本机 `mem.db`（唯一真源）或把备份同步到别处。
 
 ## 回滚
 
