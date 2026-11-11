@@ -20,6 +20,7 @@ const NAV_SECTIONS = [
   { key: 'home', label: '学习记录', path: '' },
   { key: 'weeks', label: '周', path: 'weeks/' },
   { key: 'volumes', label: '卷', path: 'volumes/' },
+  { key: 'papers', label: '试卷', path: 'papers/' },
   { key: 'stats', label: '统计', path: 'stats/' },
   { key: 'knowledge', label: '知识', path: 'knowledge/' },
   { key: 'about', label: '关于', path: 'about/' }
@@ -184,7 +185,7 @@ function compactMinutes(minutes) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
-function layout({ config, data, root, title, description, body, relPath }) {
+function layout({ config, data, root, title, description, body, relPath, styles = [] }) {
   const site = config.site;
   const section = sectionOf(relPath);
   const index = Math.max(0, NAV_SECTIONS.findIndex((item) => item.key === section));
@@ -208,7 +209,7 @@ function layout({ config, data, root, title, description, body, relPath }) {
 <meta name="description" content="${e(description)}">
 <link rel="canonical" href="${e(canonical(config, relPath))}">
 <link rel="stylesheet" href="${root}assets/app.css">
-${ENTER_SCRIPT}
+${styles.length ? `${styles.map((href) => `<link rel="stylesheet" href="${root}${href}">`).join('\n')}\n` : ''}${ENTER_SCRIPT}
 </head>
 <body data-prev="${prevItem ? e(navHref(root, prevItem)) : ''}" data-next="${
     nextItem ? e(navHref(root, nextItem)) : ''
@@ -977,7 +978,7 @@ ${volumeLegend()}`;
   });
 }
 
-function renderVolume({ volume, data, config }) {
+function renderVolume({ volume, data, config, papers = [] }) {
   const sessions = volumeSessions(data, volume);
   const doneText =
     volume.totalQuestions == null
@@ -1008,6 +1009,19 @@ function renderVolume({ volume, data, config }) {
     )
     .join('\n');
 
+  // 卷页给一个去试卷页的入口：一份卷直接进，多份卷（形式逻辑一/二）列出来
+  const volumePapers = papers.filter((paper) => paper.volumeSlug === volume.slug);
+  const paperLine = !volumePapers.length
+    ? ''
+    : volumePapers.length === 1
+      ? `<p class="note"><a class="paper-link" href="../../papers/${e(volumePapers[0].slug)}/">查看试卷原文 →</a></p>`
+      : `<p class="note">试卷原文：${volumePapers
+          .map(
+            (paper) =>
+              `<a class="paper-link" href="../../papers/${e(paper.slug)}/">${e(paper.title)}</a>`
+          )
+          .join(' · ')}</p>`;
+
   const body = `<p class="back"><a href="../">← 全部卷</a></p>
 
 <section class="day-hero">
@@ -1029,6 +1043,7 @@ function renderVolume({ volume, data, config }) {
 </div>
 ${volumeBar(volume, 'volume-progress')}
 ${volumeLegend()}
+${paperLine}
 
 <section class="section">
   <div class="section-head"><h2>场次</h2><span class="section-count">${e(
@@ -1045,6 +1060,153 @@ ${volumeLegend()}
     description: `${volume.name} 的场次、用时与正确率。`,
     body,
     relPath: `volumes/${volume.slug}/`
+  });
+}
+
+
+/**
+ * 试卷页。原文由 web/render/paper.mjs 转好（公式已在服务端用 KaTeX 渲染），
+ * 这里只负责版式：卷名、题号导航、正文。答案刻意不放——看了答案就不叫看卷了。
+ */
+function paperHref(paper) {
+  return `papers/${paper.slug}/`;
+}
+
+function paperCard(paper) {
+  const meta = [
+    paper.subject,
+    `${paper.questions.length} 题`,
+    paper.sections.length ? `${paper.sections.length} 节` : null,
+    paper.mathCount ? `${paper.mathCount} 处公式` : null
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  // 卷名只在标题里没出现时才当副标题写：形式逻辑那两份的标题本身就含卷名，重复一遍是噪音
+  const note = paper.volumeName && !paper.title.includes(paper.volumeName) ? paper.volumeName : '';
+  return `<a class="volume" href="${paperHref(paper)}">
+  <div class="volume-row"><span class="volume-name">${e(paper.title)}</span><span class="volume-dots"></span><span class="volume-count">${e(
+    `${paper.questions.length} 题`
+  )}</span></div>
+  <p class="volume-meta">${e(meta)}</p>
+  ${note ? `<p class="volume-note">${e(note)}</p>` : ''}
+</a>`;
+}
+
+function renderPapers({ papers, data, config }) {
+  const cards = papers.map((paper) => paperCard(paper)).join('\n');
+  const body = `<section class="hero">
+  <div class="hero-meta"><span>index</span><span>${e(`${papers.length} 份`)}</span></div>
+  <h1>试卷</h1>
+  <p class="deck">直接看题干与选项。答案、作答与批改都不在这几页。</p>
+</section>
+
+<div class="volumes">${cards}</div>`;
+
+  return layout({
+    config,
+    data,
+    root: '../',
+    title: `试卷 · ${config.site.shortName}`,
+    description: '按卷查看试卷原文：题干、选项与材料。',
+    body,
+    relPath: 'papers/'
+  });
+}
+
+function paperNav(paper) {
+  const chipsBySection = new Map();
+  for (const question of paper.questions) {
+    const key = question.section || '';
+    if (!chipsBySection.has(key)) chipsBySection.set(key, []);
+    chipsBySection.get(key).push(question);
+  }
+
+  const groups = [];
+  for (const section of paper.sections) {
+    const chips = chipsBySection.get(section.id) || [];
+    if (!chips.length) continue; // 只有标题、没有题目的过渡节（如「管理类专业学位联考综合能力」）不进导航
+    groups.push({ id: section.id, title: section.title, full: section.full, chips });
+  }
+  const loose = chipsBySection.get('') || [];
+  if (loose.length) groups.unshift({ id: null, title: null, chips: loose });
+  if (!groups.length) return '';
+
+  const rows = groups
+    .map((group) => {
+      const heading = group.id
+        ? `<a class="paper-nav-title" href="#${e(group.id)}" title="${e(group.full)}">${e(group.title)}</a>`
+        : `<span class="paper-nav-title">试题</span>`;
+      const chips = group.chips
+        .map((question) => {
+          const tip = /^\d+$/.test(question.label) ? `第 ${question.label} 题` : question.label;
+          return `<a class="paper-chip" href="#${e(question.id)}" title="${e(tip)}">${e(
+            question.label
+          )}</a>`;
+        })
+        .join('');
+      return `<div class="paper-nav-group">
+    ${heading}
+    <span class="paper-nav-chips">${chips}</span>
+  </div>`;
+    })
+    .join('\n  ');
+
+  // 只数有题目的节：卷首那种纯标题的过渡节（「管理类专业学位联考综合能力」）不算一节
+  const sectionCount = groups.filter((group) => group.id).length;
+  return `<nav class="paper-nav" aria-label="卷面题目导航">
+  <p class="paper-nav-head"><span>题目</span><span>${e(
+    `${paper.questions.length} 题${sectionCount ? ` · ${sectionCount} 节` : ''}`
+  )}</span></p>
+  ${rows}
+</nav>`;
+}
+
+function renderPaper({ paper, data, config }) {
+  const total = paper.questions.length;
+  const volume = data.volumes.find((item) => item.slug === paper.volumeSlug);
+  // 有原文导语就优先用导语（来源、页数、题量），没有就退回卷自己的说明
+  const deck = [paper.volumeName, paper.intro || volume?.note].filter(Boolean).join(' · ');
+  const facts = [
+    `${Math.max(1, Math.round(paper.bytes / 1024))} KB 原文`,
+    paper.mathCount ? `${paper.mathCount} 处公式` : null
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const dropped = paper.dropped
+    ? `<p class="paper-note">原文中「${e(paper.dropped)}」一节是答案附录，为避免剧透已略去。</p>`
+    : '';
+
+  const body = `<p class="back"><a href="../">← 全部试卷</a></p>
+
+<section class="day-hero">
+  <div class="hero-meta"><span>paper · ${e(paper.subject)}</span><span>${e(
+    `${total} 题`
+  )}</span></div>
+  <h1>${e(paper.title)}</h1>
+  <p class="deck">${e(deck)}</p>
+  <p class="note">${e(facts)}</p>
+</section>
+
+${paperNav(paper)}
+
+<article class="prose-editorial paper-doc">
+${paper.html}
+</article>
+
+${dropped}
+<p class="paper-foot">本页只有题干与选项；答案、你的作答与批改记录不在试卷页里。</p>
+<p class="source-raw"><a href="raw.txt">原始 Markdown ↗</a> · <a href="raw.md" download>下载 .md</a></p>`;
+
+  return layout({
+    config,
+    data,
+    root: '../../',
+    title: `${paper.title} · ${config.site.shortName}`,
+    description: `${paper.volumeName} 试卷原文：${total} 题，题干与选项。`,
+    // 有公式才引 KaTeX 样式：英语、逻辑卷不必为 20 多 KB 的字体规则买单
+    styles: paper.mathCount ? ['assets/katex/katex.min.css'] : [],
+    body,
+    relPath: `papers/${paper.slug}/`
   });
 }
 
@@ -1295,8 +1457,9 @@ function render404({ data, config }) {
   });
 }
 
-function renderSitemap({ data, config }) {
+function renderSitemap({ data, config, papers = [] }) {
   const volumeUrls = data.volumes.map((volume) => `volumes/${volume.slug}/`);
+  const paperUrls = papers.map((paper) => `papers/${paper.slug}/`);
   const weekUrls = data.weeks.map((week) => `weeks/${week.key.toLowerCase()}/`);
   const sourceUrls = config.publish?.fullText
     ? data.days.flatMap((day) => day.sessions.map((session) => encodeURI(`${sourceRel(session)}/`)))
@@ -1306,12 +1469,14 @@ function renderSitemap({ data, config }) {
     'days/',
     'weeks/',
     'volumes/',
+    'papers/',
     'stats/',
     'knowledge/',
     'about/',
     ...weekUrls,
     ...sourceUrls,
     ...volumeUrls,
+    ...paperUrls,
     ...data.days.map((day) => `day/${day.date}/`)
   ];
   const entries = urls
@@ -1329,7 +1494,7 @@ ${entries}
 `;
 }
 
-export function renderSite({ data, config, report, outDir, sources = [], emit = null }) {
+export function renderSite({ data, config, report, outDir, sources = [], papers = [], emit = null }) {
   // emit 给了就只产出内容、不落盘：运行时按请求出页面走这条路径，
   // 省掉「写 172 个文件、再逐个读回来」的一次往返。
   if (!emit) fs.mkdirSync(outDir, { recursive: true });
@@ -1354,10 +1519,16 @@ export function renderSite({ data, config, report, outDir, sources = [], emit = 
     write(`weeks/${week.key.toLowerCase()}/index.html`, renderWeek({ week, data, config }));
   }
   write('volumes/index.html', renderVolumes({ data, config }));
+  write('papers/index.html', renderPapers({ papers, data, config }));
   write('stats/index.html', renderStats({ data, config }));
   write('knowledge/index.html', renderKnowledge({ data, config }));
   for (const volume of data.volumes) {
-    write(`volumes/${volume.slug}/index.html`, renderVolume({ volume, data, config }));
+    write(`volumes/${volume.slug}/index.html`, renderVolume({ volume, data, config, papers }));
+  }
+  for (const paper of papers) {
+    write(`papers/${paper.slug}/index.html`, renderPaper({ paper, data, config }));
+    write(`papers/${paper.slug}/raw.md`, paper.source);
+    write(`papers/${paper.slug}/raw.txt`, paper.source);
   }
   for (const day of data.days) {
     write(`day/${day.date}/index.html`, renderDay({ day, data, config }));
@@ -1372,7 +1543,7 @@ export function renderSite({ data, config, report, outDir, sources = [], emit = 
   }
   write('about/index.html', renderAbout({ data, config }));
   write('404.html', render404({ data, config }));
-  write('sitemap.xml', renderSitemap({ data, config }));
+  write('sitemap.xml', renderSitemap({ data, config, papers }));
   write('data.json', `${JSON.stringify(data, null, 2)}\n`);
   write('build-report.json', `${JSON.stringify(report, null, 2)}\n`);
 

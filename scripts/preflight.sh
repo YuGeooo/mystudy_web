@@ -3,7 +3,7 @@
 #
 # 检查四件事：
 #   1. Node 版本（node:sqlite 需要 >= 22.5，这是硬门槛，勉强不了）
-#   2. 依赖是否装齐（唯一依赖 marked，但缺了整站起不来）
+#   2. 依赖是否装齐（marked 渲染原文页、katex 渲染试卷页公式，缺了整站起不来）
 #   3. 渲染器整条 import 链能否加载（顺带做了语法检查）
 #   4. 关键数据文件在不在
 #
@@ -26,9 +26,9 @@ if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt
 fi
 
 # ---- 2 & 3. 依赖与渲染器 ----
-# 只跑一次加载，避免重复开销；渲染器在模块顶层 import 'marked'，
+# 只跑一次加载，避免重复开销；渲染器在模块顶层 import 'marked'，试卷模块 import 'katex'，
 # 所以这一条同时验证了「依赖装了」和「渲染器语法没问题」。
-if ! LOAD_ERR=$(node -e "import('./web/render/render.mjs')" 2>&1); then
+if ! LOAD_ERR=$(node -e "import('./web/render/render.mjs').then(() => import('./web/render/paper.mjs'))" 2>&1); then
   if grep -q "ERR_MODULE_NOT_FOUND" <<<"$LOAD_ERR"; then
     MISSING=$(grep -oE "Cannot find (package|module) '[^']*'" <<<"$LOAD_ERR" | head -1)
     fail "$MISSING —— 依赖没装齐。跑一次：npm ci"
@@ -37,7 +37,7 @@ if ! LOAD_ERR=$(node -e "import('./web/render/render.mjs')" 2>&1); then
 fi
 
 # ---- 4. 关键文件 ----
-for f in data/volumes.json web/site.config.json web/assets/app.css; do
+for f in data/volumes.json web/site.config.json web/assets/app.css web/assets/katex/katex.min.css; do
   [ -e "$f" ] || fail "缺少 $f —— 仓库不完整，检查是否漏拉文件。"
 done
 # 数据库不入版本库（二进制），新机器上需要单独取回。
@@ -45,4 +45,4 @@ if [ ! -e data/mem.db ]; then
   fail "缺少 data/mem.db。新机器上执行 ./scripts/pull-data.sh 从线上取回，或 ./scripts/restore.sh <备份目录> 恢复。"
 fi
 
-echo "[预检] Node $(node -v) · 依赖齐全 · 渲染器可加载 · 数据文件就位"
+echo "[预检] Node $(node -v) · 依赖齐全（marked / katex） · 渲染器可加载 · 数据文件就位"

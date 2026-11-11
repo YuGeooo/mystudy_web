@@ -34,6 +34,9 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
 };
 
 const mimeOf = (rel) => MIME[path.extname(rel).toLowerCase()] || 'application/octet-stream';
@@ -52,8 +55,26 @@ let state = {
   error: null,
 };
 
-// 静态资源单独缓存：CSS 是 Tailwind 预编译产物，不随数据变化。
-let cssCache = null; // { body: Buffer, mtimeMs }
+// 静态资源单独缓存：按 mtime + 大小判断失效。
+// app.css 是 Tailwind 预编译产物，KaTeX 的样式与字体是 vendored 的第三方文件，
+// 都不随数据变化，所以除了 app.css 之外都允许浏览器长时间缓存。
+const assetCache = new Map(); // name → { mtimeMs, size, body }
+
+function loadAsset(name) {
+  const file = path.resolve(ASSETS, name);
+  if (file !== ASSETS && !file.startsWith(ASSETS + path.sep)) return null;
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile()) return null;
+    const cached = assetCache.get(name);
+    if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached;
+    const entry = { mtimeMs: st.mtimeMs, size: st.size, body: fs.readFileSync(file) };
+    assetCache.set(name, entry);
+    return entry;
+  } catch {
+    return null;
+  }
+}
 
 // 契约文件的指纹（大小 + mtime）。写接口会主动重建页表，但直接改库再重导 JSON
 // 这种绕开写接口的路径也得让页面跟上，所以每次请求顺手比对一下。
@@ -112,19 +133,6 @@ export function status() {
   return { ...state, pages: pages.size };
 }
 
-function loadCss() {
-  const file = path.join(ASSETS, 'app.css');
-  try {
-    const st = fs.statSync(file);
-    if (!cssCache || cssCache.mtimeMs !== st.mtimeMs) {
-      cssCache = { body: fs.readFileSync(file), mtimeMs: st.mtimeMs };
-    }
-    return cssCache.body;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * 页面数据的全集——就是渲染这批页面时用的那份 buildData() 结果。
  * `/api/study` 原样返回，不重新查库：页面看到什么，接口就返回什么。
@@ -133,13 +141,13 @@ export function getSiteData() {
   return siteData;
 }
 
-function send(req, res, status_, body, type, etag) {
+function send(req, res, status_, body, type, etag, cacheControl = 'no-cache') {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
   const headers = {
     'Content-Type': type,
     'Content-Length': buf.length,
-    // 必须回源校验：内容会随写库变化，不能给浏览器一个"一段时间内别问"的缓存
-    'Cache-Control': 'no-cache',
+    // 页面必须回源校验：内容会随写库变化，不能给浏览器一个"一段时间内别问"的缓存
+    'Cache-Control': cacheControl,
   };
   if (etag) headers.ETag = etag;
 
@@ -176,9 +184,13 @@ export function serve(req, res, pathname, today) {
   if (!rel || rel.endsWith('/')) rel += 'index.html';
 
   if (rel.startsWith('assets/')) {
-    const css = loadCss();
-    if (rel === 'assets/app.css' && css) {
-      return send(req, res, 200, css, MIME['.css'], `W/"css-${css.length}"`);
+    const name = rel.slice('assets/'.length);
+    const asset = name ? loadAsset(name) : null;
+    if (asset) {
+      const etag = `W/"a-${asset.size}-${Math.round(asset.mtimeMs)}"`;
+      // app.css 每次部署都可能变，回源校验；KaTeX 的字体与样式几乎不变，给一周缓存
+      const cache = name === 'app.css' ? 'no-cache' : 'public, max-age=604800';
+      return send(req, res, 200, asset.body, mimeOf(name), etag, cache);
     }
     return send(req, res, 404, '{"error":"not found"}\n', 'application/json; charset=utf-8');
   }

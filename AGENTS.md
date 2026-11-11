@@ -14,7 +14,7 @@
 | 目录 | 是什么 | 能不能改 |
 |---|---|---|
 | `server/` | Node 22 服务：`dev.mjs` 入口 · `pages.mjs` 内存页表 · `routes.mjs` 分发 · `read-api.mjs` / `write.mjs` / `catalog.mjs` 数据 · `export.mjs` 导出 · `backup.mjs` 快照 | 可以，改完跑测试 |
-| `web/render/` | 站点渲染器与 `assets/app.css`。来源是站点仓库 `~/Documents/aliyun/myWebsite/` 的副本，唯一分叉是 `renderSite()` 多一个 `emit` 参数 | 谨慎：默认行为必须保持不变 |
+| `web/render/` | 站点渲染器与 `assets/app.css`。来源是站点仓库 `~/Documents/aliyun/myWebsite/` 的副本；两处分叉：`renderSite()` 多一个 `emit` 参数、新增 `paper.mjs`（试卷页，KaTeX 在服务端出公式） | 谨慎：默认行为必须保持不变 |
 | `scripts/` | 迁移 / 导出 / 核对（Python，**只在本机跑**）+ 启动、同步、备份、恢复、测试（sh） | 可以 |
 | `deploy/` | systemd unit、nginx 之外的部署脚本、`config.server.json` | 可以，但生效需重新部署 |
 | `bin/mem` | 日常命令行 | 可以 |
@@ -107,6 +107,7 @@ mem schema                  # 字段名先查，不要猜
 ```bash
 npm run dev        # 预检 → sync.sh 导出 JSON → 起 8137（只读）
 npm test           # 预检 → 语法 → 导出等价 → SQL 32 → 写接口 122 → CLI 33 → 只读 20
+npm run check      # 只查语法（36 个 .mjs + 15 个 .sh）
 ```
 
 - `npm test` 全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的 sha256 + mtime，一致才算绿。
@@ -123,9 +124,9 @@ npm test           # 预检 → 语法 → 导出等价 → SQL 32 → 写接口
 | `./scripts/pull-data.sh` | 线上 → 本机（先给本机现状打快照） | 低，安全方向 |
 | `FORCE=1 ./scripts/push-data.sh` | 本机覆盖线上 | **高，会冲掉线上新记录** |
 | `./scripts/backup.sh` / `./scripts/restore.sh <目录>` | 手动快照 / 恢复 | 恢复会先另存 `*-before-restore`；8137 在跑直接拒绝，加 `FORCE=1` 才继续 |
-| `./scripts/sync.sh` | 库 → 三份 JSON 契约 | 低；绕过接口改了库之后必须跑，或 `POST /api/export` |
+| `./scripts/sync.sh` | 库 → 三份 JSON 契约 | 低；刷新对外契约与备份。页面已直连库，不再依赖它 |
 
-线上形态：nginx 反代 → `mem-api.service`（Node 22，`127.0.0.1:8137`）；页表在进程内，写成功后重导 JSON 并重建（40~230 ms），无定时任务；`mem-backup.timer` 每天 03:30 备份 `mem.db` + 三份 JSON 到 `/www/backup/`，保留 14 天。运维细节见 [deploy/README.md](deploy/README.md)。
+线上形态：nginx 反代 → `mem-api.service`（Node 22，`127.0.0.1:8137`）；页表在进程内，渲染输入直接从库构造（导出 JSON 只作对外契约与备份），写成功后重建（40~230 ms），无定时任务；`mem-backup.timer` 每天 03:30 备份 `mem.db` + 三份 JSON 到 `/www/backup/`，保留 14 天。运维细节见 [deploy/README.md](deploy/README.md)。
 
 ## 6. 想知道什么看哪里
 
@@ -159,5 +160,8 @@ npm test           # 预检 → 语法 → 导出等价 → SQL 32 → 写接口
 | 销账报 `not_yet_correct` | 先 `mem a set <id> correct=true`（真做对了再改） |
 | 删最后一条作答报 `last_attempt` | 改删整场（`mem s rm`），或先补一条 |
 | `npm test` 卡在 8138 | 有残留进程：`kill $(lsof -tiTCP:8138 -sTCP:LISTEN)` |
+| `mem sql --http` 报 401 | token 缺失或不匹配：`~/.mem-api-token` / `MEM_WRITE_TOKEN` / `--token` |
 | 页面文案还写着"提交"、`commits` 恒为 0 | 已知遗留口径（热力图改由 `sessions.date` 驱动），与站点保持一致，**不要单方面改文案** |
 | 新机器起不来 `ERR_MODULE_NOT_FOUND` | 先 `npm ci`，再 `./scripts/preflight.sh` 看缺哪一步 |
+| 试卷页公式变成乱码或双份 | 缺 `web/assets/katex/katex.min.css`（页面没引到样式）：确认 `npm ci` 过、`web/assets/katex` 在，重新部署 |
+| 试卷页 500 / 页表少 8 页 | 缺 `node_modules/katex`：试卷页在渲染阶段就要用它，`npm ci` 后重启进程 |

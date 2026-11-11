@@ -18,8 +18,8 @@
   mem-api.env               写接口 token（600 root:root，不进版本库）
   server/                   API + 页面服务，由 ./deploy/deploy-api.sh 同步
   web/render/               页面渲染器（新架构下归本仓库管，不再软链站点仓库）
-  web/assets/app.css        Tailwind 预编译样式
-  node_modules/             第三方依赖（只有 marked，92 KB），随代码打包过来，服务器不跑 npm
+  web/assets/               Tailwind 预编译样式 app.css + KaTeX 的样式与字体（试卷页公式）
+  node_modules/             第三方依赖（marked + katex，约 4.4 MB），随代码打包过来，服务器不跑 npm
   .rollback/                每次部署前的代码备份，保留 10 份
   data -> /www/data         软链
 /www/builder                静态构建器与部署脚本
@@ -37,11 +37,11 @@
 
 ```
 浏览器 → nginx → 127.0.0.1:8137（mem-api.service）
-                  ├─ /study/*  → 内存页表，171 个页面，命中即返回（带 ETag，可 304）
+                  ├─ /study/*  → 内存页表，196 个页面，命中即返回（带 ETag，可 304）
                   └─ /api/*    → SQLite 读写
 ```
 
-页面**不再**是 `/www/site` 里的静态文件。`mem-api` 启动时把三份 JSON 渲染成一张
+页面**不再**是 `/www/site` 里的静态文件。`mem-api` 启动时把库渲染成一张
 `Map<路径, HTML>` 存在内存里，每次写库成功后重建（线上 40~230ms），
 所以写完立刻可见，没有构建产物、没有定时任务、没有等待窗口。
 
@@ -112,13 +112,14 @@ curl -X POST https://geyuqi.me/api/sessions \
 
 流程：
 
-1. 本机检查 `node_modules/marked` 存在，否则拒绝打包（避免推出一个缺依赖的版本）
+1. 本机检查 `node_modules/marked`、`node_modules/katex` 存在，否则拒绝打包（避免推出一个缺依赖的版本）
 2. 打包 `server/`、`web/render/`、`web/assets/app.css`、`node_modules/`（约 216 KB）
-3. 服务器上解到暂存目录，逐个 `node --check`，并确认包里有 `node_modules/marked`
+3. 服务器上解到暂存目录，逐个 `node --check`，并确认包里有 `node_modules/marked`、`node_modules/katex` 与 `web/assets/katex`
 4. 备份旧代码到 `.rollback/`（保留 10 份）
 5. 停服务 → 换 `server`、`web/render`、`web/assets`、`node_modules` → 起服务
-6. 健康检查四连：服务 active、页表 ≥ 100 页、`import('marked')` 可解析、
-   `/study/` 与一个**原文页**返回 200（原文页是唯一走 `marked` 的页面类型，能验证依赖真的可用）
+6. 健康检查：服务 active、页表 ≥ 100 页、`import('marked')` 与 `import('katex')` 可解析、
+   `/study/`、一个**原文页**、一个**试卷页**与 KaTeX 的 CSS/字体都返回 200
+   （原文页验 marked，试卷页与字体验 katex，能确认依赖真的可用）
 7. 全部通过后才删掉旧的 `node_modules.old`；任一步失败自动回滚代码
 
 **依赖不走 npm**：服务器不需要联网装包，`node_modules` 直接从本机打包过去。
@@ -314,7 +315,7 @@ nginx 配置备份在 `/etc/nginx/conf.d/geyuqi.me.conf.bak.*`（上线时的 `2
   `Restart=on-failure` 会自动拉起；重建失败时旧页表继续服务，不会白屏。
 - 页表常驻内存，实测 RSS 约 130 MB、171 页；每次写库重建 40~230 ms，期间请求串行排队——
   单人使用没有感知，将来真要多端高并发再说。
-- **依赖只有 `marked`，随代码一起打包**，落在 `/www/api/node_modules`。不要在服务器上跑
+- **依赖只有 `marked` 与 `katex`，随代码一起打包**，落在 `/www/api/node_modules`。不要在服务器上跑
   `npm install`——版本以本机 `package-lock.json` 为准，改了依赖就走 `npm ci` + `deploy-api.sh`。
   旧架构在 `/www/api/web/node_modules` 留过一份副本，已清掉：两份并存会让 `web/render/`
   优先解析到那份旧的，改了依赖却看不出变化。

@@ -5,8 +5,8 @@
 # 同步范围（从不碰数据与配置）：
 #   server/*.mjs        API 与页面服务
 #   web/render/*.mjs    页面渲染器（页面由这个进程渲染，归本仓库管）
-#   web/assets/app.css  Tailwind 预编译样式
-#   node_modules/       第三方依赖（目前只有 marked，92 KB，打包过去省得服务器跑 npm）
+#   web/assets/         静态资源：Tailwind 预编译样式 app.css + KaTeX 的样式与字体
+#   node_modules/       第三方依赖（marked + katex，打包过去省得服务器跑 npm）
 #
 # 数据（/www/data）与配置（config.local.json、mem-api.env）都在服务器上单独维护，
 # 这里绝不覆盖 —— 配置里带着写接口的开关和 token。
@@ -24,9 +24,13 @@ PKG="/tmp/mem-api-$TS.tar.gz"
 
 cd "$ROOT"
 
-# 依赖没装齐就别打包：否则服务器上会带着一个"缺 marked"的版本上线。
+# 依赖没装齐就别打包：否则服务器上会带着一个"缺 marked / 缺 katex"的版本上线。
 if [ ! -d node_modules/marked ]; then
   echo "[api] 本机缺 node_modules/marked —— 先跑 npm ci" >&2
+  exit 1
+fi
+if [ ! -d node_modules/katex ]; then
+  echo "[api] 本机缺 node_modules/katex —— 试卷页公式要靠它，先跑 npm ci" >&2
   exit 1
 fi
 
@@ -35,7 +39,8 @@ tar czf "$PKG" \
   --exclude='test-write-api.mjs' --exclude='smoke-test.mjs' \
   --exclude='test-cli.mjs' --exclude='test-sql.mjs' \
   --exclude='node_modules/.bin' \
-  server/*.mjs web/render/*.mjs web/assets/app.css node_modules
+  --exclude='node_modules/katex/contrib' --exclude='node_modules/katex/README.md' \
+  server/*.mjs web/render/*.mjs web/assets node_modules
 echo "[api] 打包 $(tar tzf "$PKG" | grep -cv '/$' || true) 个文件（含依赖 $(du -sh node_modules | cut -f1)）"
 
 scp -q $SSH_OPTS "$PKG" "$SERVER:/tmp/mem-api-$TS.tar.gz"
@@ -59,6 +64,8 @@ for f in "$STAGE"/server/*.mjs "$STAGE"/web/render/*.mjs; do
   "$NODE" --check "$f" >/dev/null || { echo "[api] 语法错误：$f" >&2; rm -rf "$STAGE"; exit 1; }
 done
 [ -d "$STAGE/node_modules/marked" ] || { echo "[api] 包里没有 node_modules/marked" >&2; rm -rf "$STAGE"; exit 1; }
+[ -d "$STAGE/node_modules/katex" ] || { echo "[api] 包里没有 node_modules/katex" >&2; rm -rf "$STAGE"; exit 1; }
+[ -f "$STAGE/web/assets/katex/katex.min.css" ] || { echo "[api] 包里缺 KaTeX 样式（web/assets/katex）" >&2; rm -rf "$STAGE"; exit 1; }
 echo "[api] 预检通过（server $(ls -1 "$STAGE"/server/*.mjs | wc -l | tr -d ' ') 个 / render $(ls -1 "$STAGE"/web/render/*.mjs | wc -l | tr -d ' ') 个 / 依赖就位）"
 
 # ---- 2. 备份旧代码 ----
@@ -78,8 +85,9 @@ mkdir -p web
 rm -rf web/render
 mkdir -p web/render
 cp "$STAGE"/web/render/*.mjs web/render/
+# 静态资源整目录同步（app.css + katex 样式与字体）。不先删旧目录：文件名稳定，留着无害。
 mkdir -p web/assets
-cp "$STAGE"/web/assets/app.css web/assets/app.css
+cp -R "$STAGE"/web/assets/. web/assets/
 
 # 依赖统一放 /www/api/node_modules。旧的那份先挪开，健康检查通过后才删。
 rm -rf node_modules.old
@@ -117,13 +125,17 @@ if [ -z "$PAGES" ] || [ "$PAGES" -lt 100 ]; then
   exit 1
 fi
 
-# ---- 5. 依赖自检：marked 必须能从 /www/api 解析到 ----
+# ---- 5. 依赖自检：marked（原文页）与 katex（试卷页公式）必须能从 /www/api 解析到 ----
 if ! "$NODE" -e "import('marked')" >/dev/null 2>&1; then
   echo "[api] 依赖 marked 无法解析 —— 原文页会全部 500。检查 node_modules 位置。" >&2
   exit 1
 fi
+if ! "$NODE" -e "import('katex')" >/dev/null 2>&1; then
+  echo "[api] 依赖 katex 无法解析 —— 试卷页会渲染失败。检查 node_modules 位置。" >&2
+  exit 1
+fi
 
-# ---- 6. 抽检页面：首页 + 一个原文页（唯一走 marked 渲染的页面类型）----
+# ---- 6. 抽检页面：首页 + 原文页 + 试卷页 + KaTeX 字体样式 ----
 CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:8137/study/ || echo 000)"
 echo "[api] /study/ → HTTP $CODE"
 [ "$CODE" = "200" ] || { echo "[api] 页面不可用，请检查日志" >&2; exit 1; }
@@ -136,6 +148,20 @@ if [ -n "$SRC_PATH" ]; then
 else
   echo "[api] sitemap 里没有 source 页，跳过原文页抽检"
 fi
+
+PAPER_PATH="$(curl -s --max-time 10 http://127.0.0.1:8137/study/sitemap.xml | grep -o '/study/papers/[^<]*' | grep -v '/papers/$' | head -1 || true)"
+if [ -n "$PAPER_PATH" ]; then
+  PCODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1:8137${PAPER_PATH}" || echo 000)"
+  echo "[api] 试卷页抽检（${PAPER_PATH}）→ HTTP $PCODE"
+  [ "$PCODE" = "200" ] || { echo "[api] 试卷页不可用，多半是 katex 渲染失败" >&2; exit 1; }
+else
+  echo "[api] sitemap 里没有试卷页，跳过试卷页抽检"
+fi
+
+KCODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:8137/study/assets/katex/katex.min.css || echo 000)"
+FCODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:8137/study/assets/katex/fonts/KaTeX_Main-Regular.woff2 || echo 000)"
+echo "[api] KaTeX 样式 → HTTP $KCODE · 字体 → HTTP $FCODE"
+[ "$KCODE" = "200" ] && [ "$FCODE" = "200" ] || { echo "[api] KaTeX 静态资源缺失：公式会退化成方框或错位" >&2; exit 1; }
 
 # ---- 7. 一切正常，清掉旧依赖副本 ----
 rm -rf node_modules.old

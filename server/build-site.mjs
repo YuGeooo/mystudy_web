@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isSessionPath, parseSession } from '../web/render/parse.mjs';
 import { buildData } from '../web/render/aggregate.mjs';
+import { buildPaper } from '../web/render/paper.mjs';
 import { renderSite } from '../web/render/render.mjs';
 import { todayLocal } from './dates.mjs';
 
@@ -32,6 +33,45 @@ function countBy(items, keyFn) {
   return out;
 }
 
+// 试卷渲染结果按 Markdown 原文缓存。KaTeX 是这一步最慢的地方（8 份约 45ms），
+// 而写接口通常只改作答与判定、试卷正文不动，所以原文没变就直接复用上次的 HTML，
+// 写库后的页表重建不会因为试卷页变慢。
+const paperCache = new Map();
+
+/**
+ * 试卷：volumes.json 决定顺序与归属，content.json 提供原文。
+ * 一个卷只有一份试卷时用卷 slug（/papers/2024-exam/），有多份时补序号
+ * （/papers/formal-logic-1/），保证 URL 稳定、不因文件名带中文而变形。
+ */
+function buildPapers(content, volumesJson) {
+  const papers = [];
+  const missing = [];
+  for (const volume of volumesJson.volumes || []) {
+    const paths = (volume.papers || []).filter((p) => content.papers[p] != null);
+    for (const p of volume.papers || []) {
+      if (content.papers[p] == null) missing.push(p);
+    }
+    paths.forEach((paperPath, index) => {
+      const md = content.papers[paperPath];
+      const cached = paperCache.get(paperPath);
+      const paper = cached && cached.md === md ? cached.paper : buildPaper({ path: paperPath, md });
+      if (!cached || cached.md !== md) paperCache.set(paperPath, { md, paper });
+      papers.push({
+        ...paper,
+        slug: paths.length > 1 ? `${volume.slug}-${index + 1}` : volume.slug,
+        volumeSlug: volume.slug,
+        volumeName: volume.name,
+        subject: volume.subject,
+      });
+    });
+  }
+  // 没被任何卷收录的原文不静默丢掉：挂一条 warning，提醒回 volumes.json 补登记
+  for (const p of Object.keys(content.papers)) {
+    if (!papers.some((x) => x.path === p)) missing.push(p);
+  }
+  return { papers, missing };
+}
+
 /**
  * 读契约、解析场次、聚合出渲染所需的全部输入。
  * 每次调用都是全量重算——库小（几十场、几百条作答），实测远快于一次网络往返。
@@ -42,6 +82,7 @@ function countBy(items, keyFn) {
 export function prepare(paths = {}) {
   const siteConfigFile = paths.siteConfig || path.join(WEB, 'site.config.json');
   const volumesFile = paths.volumes || path.join(DATA, 'volumes.json');
+
   const indexFile = paths.index || path.join(DATA, 'index.json');
   const contentFile = paths.content || path.join(DATA, 'content.json');
 
@@ -70,6 +111,8 @@ export function prepare(paths = {}) {
   );
 
   const warnings = [];
+  const { papers, missing: missingPapers } = buildPapers(content, volumes);
+  for (const paperPath of missingPapers) warnings.push(`试卷未能上线（原文缺失或未登记卷）：${paperPath}`);
   const sessions = [];
   const sources = [];
   const sessionFiles = Object.keys(content.sessions).filter(isSessionPath).sort();
@@ -145,12 +188,14 @@ export function prepare(paths = {}) {
     config,
     report,
     sources,
+    papers,
     today,
     timeZone,
     stats: {
       sessions: sessions.length,
       days: data.days.length,
       volumes: data.volumes.length,
+      papers: papers.length,
       warnings: data.warnings.length,
     },
   };
@@ -168,6 +213,7 @@ export function buildPages(paths = {}) {
     config: ctx.config,
     report: ctx.report,
     sources: ctx.sources,
+    papers: ctx.papers,
     outDir: '',
     emit: (relPath, content) => pages.set(relPath, content),
   });
@@ -182,19 +228,21 @@ export function buildSite(paths = {}) {
     config: ctx.config,
     report: ctx.report,
     sources: ctx.sources,
+    papers: ctx.papers,
     outDir: BUILD_DIR,
   });
-  // 本地开发用预编译好的 app.css 直接复制；服务器上由 Tailwind 在渲染后编译，源文件不存在时跳过。
-  fs.mkdirSync(path.join(BUILD_DIR, 'assets'), { recursive: true });
-  const cssSource = path.join(WEB, 'assets', 'app.css');
-  if (fs.existsSync(cssSource)) {
-    fs.copyFileSync(cssSource, path.join(BUILD_DIR, 'assets', 'app.css'));
+  // 静态资源整目录复制：app.css + KaTeX 的样式与字体（试卷页公式要用）。
+  // 服务器上由 Tailwind 在渲染后编译，源文件不存在时跳过。
+  const assetsSource = path.join(WEB, 'assets');
+  if (fs.existsSync(assetsSource)) {
+    fs.cpSync(assetsSource, path.join(BUILD_DIR, 'assets'), { recursive: true });
   }
 
   return {
     written,
-    warnings: ctx.data.warnings,
     ...ctx.stats,
+    // warnings 放最后：stats 里有个同名的计数，展开顺序错了会让这个字段变成数字
+    warnings: ctx.data.warnings,
     today: ctx.today,
   };
 }

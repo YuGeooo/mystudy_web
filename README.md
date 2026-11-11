@@ -17,10 +17,12 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
   `build-site.mjs`（渲染）、`routes.mjs`（分发）、`read-api.mjs` / `write.mjs` / `catalog.mjs`（数据）、
   `export.mjs`（Node 版导出器）、`backup.mjs`（写前快照）、`sql.mjs`（只读 SQL 的子进程隔离执行）。
 - **P1 本地服务**：`./dev.sh` 起 `http://127.0.0.1:8137`。零框架，第三方依赖只有 `marked`（Markdown → HTML）
+  与 `katex`（试卷页公式），其余全是 Node 22 标准库（`node:http` + `node:sqlite`），数据库只读。
   端点 `/api/health` / `/api/meta` / `/api/days`；`node server/smoke-test.mjs` 自测 20 项全通过。
   代码在 `server/`，配置在 `config.local.json`。
 - **P2 本地站点**：`http://127.0.0.1:8137/study/`。三份数据契约：`index.json`、
   `content.json`（`scripts/export_content.py` 从库里还原 48 份 Markdown 全文）、`volumes.json`。
+  渲染器与样式是 `web/` 下的副本。**页面按请求在进程内渲染**（196 页常驻内存，首次 106ms）。
   与原构建器同时间点对比：共同 171 个文件，`data.json` 顶层字段一致，0 警告；
   唯一差异是 3 个「纯 git 提交日」页面消失（学习日 27 → 24），符合 `sessions.date` 口径。
 - **P3 闭环**：不实现录入界面（设计 §11 范围外）。已打通「改库 → 同步 JSON → 重建站点」：
@@ -38,7 +40,11 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
   **响应返回时页面已经是新的**，没有定时任务、没有等待窗口。
   **线上是可写入的那一份真源**，本机用 `./scripts/pull-data.sh` 拉回做副本。
   站点仓库 `/Users/geyuqi/Documents/aliyun/myWebsite/` **一行未改**；`web/render/` 是它的副本，
+  分叉有两处：`renderSite()` 多了 `emit` 参数（支持渲染到内存）、新增 `paper.mjs`（试卷页，上游没有）。
+- **试卷页**：<https://geyuqi.me/study/papers/>（2026-11-12 加）。8 份试卷按卷列出，点进去是
   题干与选项原文 + 按节的题号导航（跳到 `#2024-exam-q001` 这类锚点）。
+  原文来自 `content.json.papers`（导出器从 `questions.content_md` 逐题拼回，与库同步）；
+  数学公式用 KaTeX **在服务端**渲染，页面仍然 0 个前端 JS，样式与字体自托管在 `web/assets/katex/`；
   原文自带的答案附录（如形式逻辑一的答案速查表）整节略去，避免看卷时被剧透。
 - **加固**：本仓库已纳入 git（`data/mem.db` 与导出 JSON 不入库，见 `.gitignore`）；
   线上 `mem-backup.timer` 每天 03:30 备份 `mem.db` 与三份 JSON 到 `/www/backup/`，保留 14 天，备份后自动校验。
@@ -71,10 +77,12 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
 
 ```
 浏览器 ──▶ nginx ──▶ mem-api.service (Node 22, 127.0.0.1:8137)
+                       ├─ /study/*  → 页表（内存中的 196 个页面）
                        └─ /api/*    → 读写 SQLite
                                     写成功 → 重导 JSON → 重建页表 → 下一次请求就是新页面
 ```
 
+- **一个语言**：Node 22。服务器不引入 Python；第三方依赖只有 `marked` 与 `katex`（版本锁在
   `package-lock.json`），其余全是标准库（`node:sqlite` 直读 `mem.db`）。
 - **页面渲染**：`server/pages.mjs` 在进程内维护一张 `Map<路径, HTML>`。启动渲染一次；
   每次写库成功后重建一次（线上实测 40~162ms）；跨天自动重算「今天/倒计时」。
@@ -103,7 +111,7 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
 | 模板引擎（EJS/Pug） | 不用。模板字面量 + helper 函数 |
 | ORM | 不用。`node:sqlite` + 手写 SQL |
 | 打包器（Vite/Webpack） | 不用。CSS 是预编译好的 `web/assets/app.css` |
-| 唯一三方依赖 | `marked` 18.1.3（92 KB，零子依赖）——试卷 Markdown 转 HTML |
+| 全部三方依赖 | `marked` 18.1.3（92 KB）——试卷 Markdown 转 HTML；`katex` 0.16.25（4.3 MB）——试卷页公式渲染（服务端，页面无 JS） |
 
 **判断标准**：只有当「客户端交互状态」「多用户认证」「多人同时改前端」三者之一真实出现时，
 才值得引入框架。目前三者都没有，加框架是净负担（省约 500 行、重写 3000 行）。
@@ -111,7 +119,7 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
 ### 首次安装
 
 ```bash
-npm ci                   # 按 package-lock.json 精确安装（只有 marked）
+npm ci                   # 按 package-lock.json 精确安装（marked + katex）
 ./scripts/preflight.sh   # 环境自检：Node 版本 / 依赖 / 渲染器能否加载 / 数据文件
 ```
 
@@ -125,6 +133,7 @@ npm ci                   # 按 package-lock.json 精确安装（只有 marked）
 |---|---|
 | `npm run dev` | 预检 → 同步 JSON → 起服务（等价 `./dev.sh`） |
 | `npm test` | 全量：预检 → 语法 → 导出等价 → SQL 32 → 写接口 122 → CLI 33 → 只读 20 |
+| `npm run check` | 只做语法检查（36 个 `.mjs` + 15 个 `.sh`，含 `bin/mem`） |
 | `npm run site` | 静态构建到 `web/.build/`（离线预览与回滚兜底） |
 
 写接口测试全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的
@@ -180,7 +189,7 @@ mem export
 
 ```bash
 ./scripts/sync.sh      # 库 → index.json / content.json（本机离线工具）
-Ctrl+C && ./dev.sh     # 自动同步 + 渲染 171 个页面到内存 + 起服务
+Ctrl+C && ./dev.sh     # 自动同步 + 渲染 196 个页面到内存 + 起服务
 ```
 
 `./dev.sh` 启动前已默认执行同步。就算忘了重启，`sync.sh` 写完 JSON 后进程会在下一次
@@ -321,3 +330,6 @@ FORCE=1 ./scripts/push-data.sh
 3. `export_content.py` 现在支持 `--db` / `--out` / `--no-verify-src`：原仓库归档后加 `--no-verify-src` 即可跳过逐字节比对。
 4. 核对报告「设计稿与基线数据的偏差」三节，仍需确认口径。
 5. 线上写接口没有录入界面，现在用 `bin/mem`（见 [doc/cli.md](doc/cli.md)）。要更顺手可以做一个只读页面级的「快速记一场」表单，直连 `/api/sessions`（token 存在浏览器本地）。
+6. 静态构建（回滚兜底）走 `/www/builder` 的副本：那份 `build-site.mjs` 与渲染器还没同步试卷页，
+   所以静态产物里没有 `/papers/`，页表版本才有。要补就把 builder 的渲染器换成 `web/render/` 的副本。
+   线上正常路径（Node 进程实时渲染）不受影响。KaTeX 的样式与字体已由 `deploy/build-release.sh` 带进静态产物。

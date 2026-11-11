@@ -118,12 +118,14 @@ check('未知路径 404、非 GET 405', () => {
 const root = await fetch(BASE + '/', { redirect: 'manual' });
 const home = await page('/study/');
 const sections = await Promise.all(
-  ['weeks/', 'volumes/', 'stats/', 'knowledge/', 'about/', 'days/'].map((p) => page('/study/' + p))
+  ['weeks/', 'volumes/', 'papers/', 'stats/', 'knowledge/', 'about/', 'days/'].map((p) => page('/study/' + p))
 );
 const css = await fetch(BASE + '/study/assets/app.css');
 const siteData = await json('/study/data.json');
 const buildReport = await json('/study/build-report.json');
 const sourcePage = await page(encodeURI('/study/source/2025年英语二/answer1/'));
+const paperPage = await page('/study/papers/2024-exam/');
+const katexCss = await fetch(BASE + '/study/assets/katex/katex.min.css');
 const traversal = await fetch(BASE + '/study/%2e%2e%2f%2e%2e%2fetc%2fpasswd');
 
 check('根路径重定向到 /study/', () => {
@@ -136,7 +138,7 @@ check('首页可访问且标题正确', () => {
   assert.match(home.text, /<title>[^<]*学习记录<\/title>/);
 });
 
-check('6 个栏目页全部 200', () => {
+check('7 个栏目页全部 200', () => {
   assert.ok(sections.every((r) => r.status === 200));
 });
 
@@ -144,6 +146,15 @@ check('样式与原文页可访问', () => {
   assert.equal(css.status, 200);
   assert.equal(sourcePage.status, 200);
   assert.match(sourcePage.text, /<html/);
+});
+
+check('试卷页：锚点与公式都在，KaTeX 样式可访问', () => {
+  assert.equal(paperPage.status, 200);
+  assert.match(paperPage.text, /id="2024-exam-q001"/);
+  assert.match(paperPage.text, /class="katex"/); // 公式由服务端渲染，不是原始 $...$
+  assert.doesNotMatch(paperPage.text, /\$[A-Za-z\\]/); // 没有漏渲染的行内公式
+  assert.equal(katexCss.status, 200);
+  assert.match(katexCss.headers.get('content-type') || '', /text\/css/);
 });
 
 check('站点 data.json 与数据库口径一致', () => {
