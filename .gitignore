@@ -1,0 +1,14 @@
+.DS_Store
+
+# 数据库与派生物：真源是 data/mem.db，二进制不进版本库（每日备份另行处理）
+data/mem.db
+data/mem.db-*
+data/index.json
+data/content.json
+
+# 本地构建产物与第三方依赖副本
+web/.build/
+web/node_modules/
+
+# 运行日志
+*.log

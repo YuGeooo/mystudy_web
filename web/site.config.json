@@ -1,0 +1,41 @@
+{
+  "site": {
+    "name": "geyuqi.me · 学习记录",
+    "shortName": "学习记录",
+    "description": "把 mem 仓库里的学习痕迹整理成周报：题量、正确率、用时与坚持天数。",
+    "url": "https://geyuqi.me/study/",
+    "author": "YuGeooo",
+    "timezone": "Asia/Shanghai",
+    "memRepo": "https://github.com/YuGeooo/mem",
+    "icp": {
+      "text": "京ICP备2026072748号-1",
+      "href": "https://beian.miit.gov.cn/"
+    },
+    "police": {
+      "text": "京公网安备11011402057696号",
+      "href": "https://beian.mps.gov.cn/#/query/webSearch?code=11011402057696"
+    }
+  },
+  "volumeNotes": {
+    "2020年管综合真题": "客观题 55；两篇写作另计（目录名沿用「2020年管综合真题」）",
+    "2024年管综真题": "客观题 55；两篇写作另计",
+    "2025年英语二": "完形 + 阅读 + 新题型 45；翻译与写作另计",
+    "错题重练-2026-11-09": "跨卷重练独立卷；3 批共 25 题，题目 ID 独立，不与原卷合并计题"
+  },
+  "knowledge": {
+    "minSample": 5,
+    "maxAxes": 8
+  },
+  "countdown": {
+    "date": "2026-12-19",
+    "label": "12.19"
+  },
+  "publish": {
+    "fullText": true,
+    "summaryExcerpt": true
+  },
+  "dailyGoal": {
+    "questions": 10,
+    "minutes": 120
+  }
+}

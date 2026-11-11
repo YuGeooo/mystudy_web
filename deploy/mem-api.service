@@ -1,0 +1,26 @@
+[Unit]
+Description=mem_new read-only API (SQLite)
+After=network.target
+Documentation=file:///www/api/README.md
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/www/api
+Environment=MEM_BUILD_SITE=0
+Environment=NODE_NO_WARNINGS=0
+ExecStart=/opt/node22/bin/node server/dev.mjs
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+# 只读 API：数据库文件以外不应写盘
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/www/api
+ReadWritePaths=/www/data
+
+[Install]
+WantedBy=multi-user.target

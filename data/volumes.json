@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "volumes": [
+    {
+      "slug": "2020-exam",
+      "name": "2020 管综真题",
+      "subject": "管综",
+      "papers": ["2020年管综合真题/paper.md"],
+      "answerSources": ["2020年管综合真题/答案速查.md"],
+      "totalQuestions": 57,
+      "scorableQuestions": 55,
+      "notes": "全局题号 1–55 + 写作 56–57；2026-11-08 按原卷照片逐页转录，目录名沿用「2020年管综合真题」；条件充分性判断每题 3 分"
+    },
+    {
+      "slug": "2024-exam",
+      "name": "2024 管综真题",
+      "subject": "管综",
+      "papers": ["2024年管综真题/paper.md"],
+      "answerSources": ["2024年管综真题/答案速查.md"],
+      "totalQuestions": 57,
+      "scorableQuestions": 55,
+      "notes": "全局题号 1–55 + 写作 56–57；Q25 条件 (2) 于 2026-11-07 由 S6=26 修正为 S9=26，正确答案 C 改 E"
+    },
+    {
+      "slug": "2025-english",
+      "name": "2025 英语二",
+      "subject": "英语",
+      "papers": ["2025年英语二/paper.md"],
+      "answerSources": ["2025年英语二/试卷总结.md"],
+      "totalQuestions": 48,
+      "scorableQuestions": 45,
+      "notes": "完形 1–20、阅读 Part A 21–40、Part B 41–45；翻译与写作 A/B 为主观题"
+    },
+    {
+      "slug": "formal-logic",
+      "name": "形式逻辑与综合推理",
+      "subject": "管综",
+      "papers": [
+        "形式逻辑与综合推理/形式逻辑与综合推理一.md",
+        "形式逻辑与综合推理/形式逻辑与综合推理二.md"
+      ],
+      "answerSources": [
+        "形式逻辑与综合推理/answer1/answer1-1.md",
+        "形式逻辑与综合推理/answer2/answer2-1.md"
+      ],
+      "totalQuestions": 30,
+      "scorableQuestions": 30,
+      "answerOverrides": { "formal-logic-p2-q04": "C" },
+      "notes": "两卷各 15 题，题号各自从 1 开始；ID 必须带 p1 / p2。卷二参考答案串第 4 位 E 与判定表/逐题分析冲突，独立复算应为 C，见 answer2-1.md 的 2026-11-07 核对说明；此处显式覆盖，不改写原串"
+    },
+    {
+      "slug": "reasoning-2",
+      "name": "专项训练二-五大条件类推理题",
+      "subject": "管综",
+      "papers": ["专项训练二-五大条件类推理题/paper.md"],
+      "answerSources": ["专项训练二-五大条件类推理题/答案速查.md"],
+      "totalQuestions": 30,
+      "scorableQuestions": 30,
+      "notes": "全局 1–30；第 4 题条件 (3) 曾两次修正转录，见 paper.md 修订记录"
+    },
+    {
+      "slug": "math-applied",
+      "name": "数学应用题",
+      "subject": "管综",
+      "papers": ["数学应用题/应用题.md"],
+      "answerSources": ["数学应用题/answer*/answer*.md"],
+      "totalQuestions": 81,
+      "scorableQuestions": 81,
+      "notes": "题号按考点重新从 1 编号；ID 必须带 topic；带 (1)(2) 两小问的是条件充分性判断题"
+    },
+    {
+      "slug": "redo-20261109",
+      "name": "错题重练 2026-11-09（跨卷 25 题）",
+      "subject": "管综",
+      "papers": ["错题重练-2026-11-09/paper.md"],
+      "answerSources": ["错题重练-2026-11-09/答案速查.md"],
+      "answerGlobs": ["错题重练-2026-11-09/answer*.md"],
+      "totalQuestions": 25,
+      "scorableQuestions": 25,
+      "redoQuestions": [
+        {"number": 1, "type": "problem", "topic": "概率", "origin": "2020-exam-q004"},
+        {"number": 2, "type": "data-sufficiency", "topic": "条件充分性判断", "origin": "2020-exam-q016"},
+        {"number": 3, "type": "problem", "topic": "线性规划", "origin": "math-applied-linear-programming-01"},
+        {"number": 4, "type": "logic", "topic": "论证推理", "origin": "2020-exam-q027"},
+        {"number": 5, "type": "logic", "topic": "形式逻辑", "origin": "formal-logic-p1-q03"},
+        {"number": 6, "type": "problem", "topic": "解析几何", "origin": "2020-exam-q007"},
+        {"number": 7, "type": "data-sufficiency", "topic": "概率", "origin": "2020-exam-q019"},
+        {"number": 8, "type": "data-sufficiency", "topic": "应用题", "origin": "2020-exam-q020"},
+        {"number": 9, "type": "logic", "topic": "论证推理", "origin": "2020-exam-q043"},
+        {"number": 10, "type": "problem", "topic": "线性规划", "origin": "math-applied-linear-programming-02"},
+        {"number": 11, "type": "problem", "topic": "至少至多", "origin": "math-applied-at-least-at-most-02"},
+        {"number": 12, "type": "problem", "topic": "不定方程", "origin": "math-applied-diophantine-03"},
+        {"number": 13, "type": "logic", "topic": "形式逻辑", "origin": "formal-logic-p1-q08"},
+        {"number": 14, "type": "logic", "topic": "形式逻辑", "origin": "formal-logic-p2-q05"},
+        {"number": 15, "type": "logic", "topic": "条件类推理", "origin": "reasoning-2-q04"},
+        {"number": 16, "type": "problem", "topic": "商品利润", "origin": "math-applied-profit-06"},
+        {"number": 17, "type": "problem", "topic": "路程问题", "origin": "math-applied-distance-04"},
+        {"number": 18, "type": "data-sufficiency", "topic": "路程问题", "origin": "math-applied-distance-13"},
+        {"number": 19, "type": "problem", "topic": "集合", "origin": "math-applied-sets-01"},
+        {"number": 20, "type": "problem", "topic": "至少至多", "origin": "math-applied-at-least-at-most-03"},
+        {"number": 21, "type": "problem", "topic": "排列组合", "origin": "2020-exam-q015"},
+        {"number": 22, "type": "logic", "topic": "形式逻辑", "origin": "formal-logic-p1-q15"},
+        {"number": 23, "type": "logic", "topic": "形式逻辑", "origin": "formal-logic-p2-q07"},
+        {"number": 24, "type": "logic", "topic": "逻辑推理", "origin": "2020-exam-q034"},
+        {"number": 25, "type": "logic", "topic": "条件类推理", "origin": "reasoning-2-q12"}
+      ],
+      "notes": "跨卷重练作为独立卷：题号在本卷重编 1–25，paper.md 逐字转录原卷题干并注明原题 ID，答案取自各原卷已确认答案。answerGlobs 指向场次文件，redoQuestions 是题型 / 考点 / 原题 ID 元数据。第 2 批（16–25，2026-11-09 追加）只取此前未进过重练卷、无重做记录的错题。新增重练卷请另建目录并同步这些字段。"
+    }
+  ],
+  "knowledgeTree": {
+    "version": 1,
+    "subjects": [
+      {"id": "math", "name": "管综数学", "exam": "管综"},
+      {"id": "logic", "name": "管综逻辑", "exam": "管综"},
+      {"id": "english", "name": "英语二", "exam": "英语"},
+      {"id": "writing", "name": "中文写作", "exam": "管综"}
+    ],
+    "nodes": [
+      {"id": "math.profit", "name": "商品利润", "parent": "math", "granularity": "topic", "aliases": ["利润", "profit"]},
+      {"id": "math.distance", "name": "路程问题", "parent": "math", "granularity": "topic", "aliases": ["路程", "distance"]},
+      {"id": "math.engineering", "name": "工程问题", "parent": "math", "granularity": "topic", "aliases": ["工程", "engineering"]},
+      {"id": "math.cross-ratio", "name": "交叉比例法", "parent": "math", "granularity": "topic", "aliases": ["交叉", "cross-ratio"]},
+      {"id": "math.concentration", "name": "溶液浓度", "parent": "math", "granularity": "topic", "aliases": ["浓度", "concentration"]},
+      {"id": "math.tiered-pricing", "name": "分段计费", "parent": "math", "granularity": "topic", "aliases": ["分段", "tiered-pricing"]},
+      {"id": "math.sets", "name": "集合", "parent": "math", "granularity": "topic", "aliases": ["集合", "sets"]},
+      {"id": "math.diophantine", "name": "不定方程", "parent": "math", "granularity": "topic", "aliases": ["不定方程", "diophantine"]},
+      {"id": "math.linear-programming", "name": "线性规划", "parent": "math", "granularity": "topic", "aliases": ["线规", "linear-programming"]},
+      {"id": "math.at-least-at-most", "name": "至少至多", "parent": "math", "granularity": "topic", "aliases": ["至少至多", "at-least-at-most"]},
+      {"id": "math.probability", "name": "概率", "parent": "math", "granularity": "topic", "aliases": ["概率", "probability"]},
+      {"id": "math.combinatorics", "name": "排列组合", "parent": "math", "granularity": "topic", "aliases": ["排列组合", "combinatorics"]},
+      {"id": "math.geometry", "name": "平面几何", "parent": "math", "granularity": "topic", "aliases": ["平面几何", "geometry"]},
+      {"id": "math.analytic-geometry", "name": "解析几何", "parent": "math", "granularity": "topic", "aliases": ["解析几何", "analytic-geometry"]},
+      {"id": "math.solid-geometry", "name": "立体几何", "parent": "math", "granularity": "topic", "aliases": ["立体几何", "solid-geometry"]},
+      {"id": "math.sequence", "name": "数列", "parent": "math", "granularity": "topic", "aliases": ["数列", "sequence"]},
+      {"id": "math.algebra", "name": "代数与方程", "parent": "math", "granularity": "topic", "aliases": ["代数", "方程", "algebra"]},
+      {"id": "math.number-theory", "name": "整数与整除", "parent": "math", "granularity": "topic", "aliases": ["整数", "整除", "number-theory"]},
+      {"id": "math.ratio", "name": "比例与百分比", "parent": "math", "granularity": "topic", "aliases": ["比例", "百分比", "ratio"]},
+      {"id": "math.average", "name": "平均数", "parent": "math", "granularity": "topic", "aliases": ["平均数", "average"]},
+      {"id": "math.inequality", "name": "不等式与最值", "parent": "math", "granularity": "topic", "aliases": ["不等式", "最值", "inequality"]},
+      {"id": "math.other", "name": "其他数学", "parent": "math", "granularity": "topic", "aliases": []},
+      {"id": "logic.formal", "name": "形式逻辑", "parent": "logic", "granularity": "topic", "aliases": ["条件命题", "模态", "量词"]},
+      {"id": "logic.argument", "name": "论证推理", "parent": "logic", "granularity": "topic", "aliases": ["削弱", "支持", "假设"]},
+      {"id": "logic.reasoning", "name": "综合推理", "parent": "logic", "granularity": "topic", "aliases": ["排列匹配", "真假话"]},
+      {"id": "logic.conditional", "name": "条件类推理", "parent": "logic", "granularity": "topic", "aliases": ["五大条件类"]},
+      {"id": "logic.other", "name": "其他逻辑", "parent": "logic", "granularity": "topic", "aliases": []},
+      {"id": "english.cloze", "name": "完形填空", "parent": "english", "granularity": "type", "aliases": ["完形"]},
+      {"id": "english.reading", "name": "阅读理解", "parent": "english", "granularity": "type", "aliases": ["阅读"]},
+      {"id": "english.new-type", "name": "新题型", "parent": "english", "granularity": "type", "aliases": ["小标题匹配"]},
+      {"id": "english.translation", "name": "翻译", "parent": "english", "granularity": "type", "aliases": []},
+      {"id": "english.writing", "name": "英语写作", "parent": "english", "granularity": "type", "aliases": []},
+      {"id": "writing.argument-analysis", "name": "论证有效性分析", "parent": "writing", "granularity": "type", "aliases": []},
+      {"id": "writing.essay", "name": "论说文", "parent": "writing", "granularity": "type", "aliases": []}
+    ]
+  },
+  "questionTopics": {
+    "2020-exam": {
+      "1": "math.ratio", "2": "math.sets", "3": "math.average", "4": "math.probability",
+      "5": "math.sequence", "6": "math.algebra", "7": "math.analytic-geometry", "8": "math.inequality",
+      "9": "math.ratio", "10": "math.geometry", "11": "math.sequence", "12": "math.geometry",
+      "13": "math.distance", "14": "math.probability", "15": "math.combinatorics", "16": "math.geometry",
+      "17": "math.analytic-geometry", "18": "math.average", "19": "math.probability", "20": "math.diophantine",
+      "21": "math.solid-geometry", "22": "math.number-theory", "23": "math.algebra", "24": "math.inequality",
+      "25": "math.inequality", "26": "logic.formal", "27": "logic.argument", "28": "logic.argument",
+      "29": "logic.reasoning", "30": "logic.formal", "31": "logic.reasoning", "32": "logic.reasoning",
+      "33": "logic.argument", "34": "logic.formal", "35": "logic.argument", "36": "logic.formal",
+      "37": "logic.reasoning", "38": "logic.reasoning", "39": "logic.conditional", "40": "logic.argument",
+      "41": "logic.reasoning", "42": "logic.conditional", "43": "logic.argument", "44": "logic.argument",
+      "45": "logic.argument", "46": "logic.reasoning", "47": "logic.reasoning", "48": "logic.argument",
+      "49": "logic.argument", "50": "logic.argument", "51": "logic.conditional", "52": "logic.formal",
+      "53": "logic.formal", "54": "logic.reasoning", "55": "logic.reasoning"
+    },
+    "2024-exam": {
+      "1": "math.ratio", "2": "math.probability", "3": "math.sequence", "4": "math.inequality",
+      "5": "math.analytic-geometry", "6": "math.sequence", "7": "math.combinatorics", "8": "math.geometry",
+      "9": "math.engineering", "10": "math.sequence", "11": "math.geometry", "12": "math.distance",
+      "13": "math.solid-geometry", "14": "math.probability", "15": "math.inequality", "16": "math.probability",
+      "17": "math.number-theory", "18": "math.algebra", "19": "math.inequality", "20": "math.inequality",
+      "21": "math.inequality", "22": "math.distance", "23": "math.analytic-geometry", "24": "math.algebra",
+      "25": "math.sequence", "26": "logic.formal", "27": "logic.reasoning", "28": "logic.argument",
+      "29": "logic.conditional", "30": "logic.argument", "31": "logic.argument", "32": "logic.conditional",
+      "33": "logic.argument", "34": "logic.argument", "35": "logic.conditional", "36": "logic.conditional",
+      "37": "logic.argument", "38": "logic.argument", "39": "logic.reasoning", "40": "logic.reasoning",
+      "41": "logic.argument", "42": "logic.formal", "43": "logic.formal", "44": "logic.argument",
+      "45": "logic.reasoning", "46": "logic.argument", "47": "logic.conditional", "48": "logic.argument",
+      "49": "logic.conditional", "50": "logic.reasoning", "51": "logic.formal", "52": "logic.conditional",
+      "53": "logic.argument", "54": "logic.reasoning", "55": "logic.reasoning"
+    },
+    "formal-logic-p1": {
+      "1": "logic.formal", "2": "logic.conditional", "3": "logic.formal", "4": "logic.conditional",
+      "5": "logic.argument", "6": "logic.formal", "7": "logic.conditional", "8": "logic.conditional",
+      "9": "logic.conditional", "10": "logic.conditional", "11": "logic.conditional", "12": "logic.conditional",
+      "13": "logic.conditional", "14": "logic.reasoning", "15": "logic.conditional"
+    },
+    "formal-logic-p2": {
+      "1": "logic.formal", "2": "logic.formal", "3": "logic.formal", "4": "logic.formal",
+      "5": "logic.formal", "6": "logic.formal", "7": "logic.formal", "8": "logic.formal",
+      "9": "logic.formal", "10": "logic.formal", "11": "logic.argument", "12": "logic.formal",
+      "13": "logic.argument", "14": "logic.formal", "15": "logic.reasoning"
+    }
+  },
+  "topicAliases": {
+    "利润": "profit",
+    "路程": "distance",
+    "工程": "engineering",
+    "交叉": "cross-ratio",
+    "浓度": "concentration",
+    "分段": "tiered-pricing",
+    "集合": "sets",
+    "不定方程": "diophantine",
+    "线规": "linear-programming",
+    "至少至多": "at-least-at-most"
+  },
+  "mathTopics": [
+    { "section": 1, "name": "商品利润", "topic": "profit", "count": 10 },
+    { "section": 2, "name": "路程问题", "topic": "distance", "count": 14 },
+    { "section": 3, "name": "工程问题", "topic": "engineering", "count": 19 },
+    { "section": 4, "name": "交叉比例法", "topic": "cross-ratio", "count": 1 },
+    { "section": 5, "name": "溶液浓度", "topic": "concentration", "count": 9 },
+    { "section": 6, "name": "分段计费", "topic": "tiered-pricing", "count": 4 },
+    { "section": 7, "name": "集合", "topic": "sets", "count": 4 },
+    { "section": 8, "name": "不定方程", "topic": "diophantine", "count": 11 },
+    { "section": 9, "name": "线性规划", "topic": "linear-programming", "count": 3 },
+    { "section": 10, "name": "至少至多", "topic": "at-least-at-most", "count": 6 }
+  ]
+}
