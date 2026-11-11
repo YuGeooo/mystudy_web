@@ -15,7 +15,7 @@
 |---|---|---|
 | `server/` | Node 22 服务：`dev.mjs` 入口 · `pages.mjs` 内存页表 · `routes.mjs` 分发 · `read-api.mjs` / `write.mjs` / `catalog.mjs` 数据 · `export.mjs` 导出 · `backup.mjs` 快照 · `sqlrun.mjs` / `sql.mjs` 只读 SQL | 可以，改完跑测试 |
 | `web/render/` | 站点渲染器与 `assets/app.css`。来源是站点仓库 `~/Documents/aliyun/myWebsite/` 的副本；两处分叉：`renderSite()` 多一个 `emit` 参数、新增 `paper.mjs`（试卷页，KaTeX 在服务端出公式） | 谨慎：默认行为必须保持不变 |
-| `scripts/` | 迁移 / 导出 / 核对（Python，**只在本机跑**）+ 启动、同步、备份、恢复、测试（sh） | 可以 |
+| `scripts/` | 启动、同步（sync.sh 调 Node 导出器）、备份、恢复、测试（sh），**只在本机跑** | 可以 |
 | `deploy/` | systemd unit、nginx 之外的部署脚本、`config.server.json` | 可以，但生效需重新部署 |
 | `bin/mem` | 日常命令行 | 可以 |
 | `data/` | `mem.db` + 导出物 `index.json` / `content.json`（知识树与卷清单 2026-11-12 起在库里） | **只在 `data/test.db` 上自由折腾** |
@@ -25,7 +25,7 @@
 两个必须知道的事实：
 
 - **`data/mem.db` 与三份 JSON 全在 `.gitignore` 里。** clone 下来是空壳，新机器要先 `./scripts/pull-data.sh` 或 `./scripts/restore.sh <备份目录>`。
-- **`../mem` 是内容侧的只读仓库**（基线 `ad4f3ff`，工作区干净）。它保存着迁移前的 Markdown 原文与 `data/index.json` 基线，`scripts/memdb.py` 的 `SRC` 指向它做逐字节比对。**不要在那里新增或修改内容**——会和线上真源分叉。
+- **`../mem` 是内容侧的只读仓库**（基线 `ad4f3ff`，工作区干净）。它保存着迁移前的 Markdown 原文，仅作历史参考（迁移期用它做过逐字节比对，迁移脚本已退役）。**不要在那里新增或修改内容**——会和线上真源分叉。
 - **`../mem_study` 是学习空间**（总结、生词本、草稿），归用户自己用，本仓库不管它；要查它在写什么，直接读那个目录。
 
 ## 2. 硬边界
@@ -106,14 +106,14 @@ mem schema                  # 字段名先查，不要猜
 
 ```bash
 npm run dev        # 预检 → sync.sh 导出 JSON → 起 8137（只读）
-npm test           # 预检 → 语法 → 导出等价 → SQL 32 → 写接口 122 → CLI 33 → 只读 20
-npm run check      # 只查语法（36 个 .mjs + 15 个 .sh）
+npm test           # 预检 → 语法 → SQL 32 → 写接口 122 → CLI 33 → 只读 20
+npm run check      # 只查语法（35 个 .mjs + 15 个 .sh）
 ```
 
 - `npm test` 全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的 sha256 + mtime，一致才算绿。
 - 只读回归不依赖常驻服务：`test.sh` 发现 8137 没起会临时起一个，跑完自动停。8138 被占用则直接报错退出，先 `kill $(lsof -tiTCP:8138 -sTCP:LISTEN)`。
 - 提交钩子：`./scripts/install-hooks.sh`（`core.hooksPath=scripts/hooks`）。pre-commit **刻意不跑测试**——进程里跑的是旧代码，绿是假绿。只要 `git commit --no-verify` 过，事后必须补跑 `npm test`。
-- 改 `write.mjs` / `export.mjs` / `pages.mjs` 属于高危改动：`notes` / `note` 是 JSON 信封，导出器按键名取值；`content.json` 依赖 `FULLTEXT_MARK`（`===== 场次全文：`）复原原文页。改这几处必须同时验证站点页面与 `scripts/compare-export.mjs`。
+- 改 `write.mjs` / `export.mjs` / `pages.mjs` 属于高危改动：`notes` / `note` 是 JSON 信封，导出器按键名取值；`content.json` 依赖 `FULLTEXT_MARK`（`===== 场次全文：`）复原原文页。改这几处必须同时验证站点页面与导出产物（`node server/export-cli.mjs` 后比对 JSON）。
 
 ## 5. 部署与数据运维（都要先问）
 
@@ -124,7 +124,7 @@ npm run check      # 只查语法（36 个 .mjs + 15 个 .sh）
 | `./scripts/pull-data.sh` | 线上 → 本机（先给本机现状打快照） | 低，安全方向 |
 | `FORCE=1 ./scripts/push-data.sh` | 本机覆盖线上 | **高，会冲掉线上新记录** |
 | `./scripts/backup.sh` / `./scripts/restore.sh <目录>` | 手动快照 / 恢复 | 恢复会先另存 `*-before-restore`；8137 在跑直接拒绝，加 `FORCE=1` 才继续 |
-| `./scripts/sync.sh` | 库 → 三份 JSON 契约 | 低；刷新对外契约与备份。页面已直连库，不再依赖它 |
+| `./scripts/sync.sh` | 库 → index.json / content.json 契约（调 Node 导出器） | 低；刷新对外契约与备份。页面已直连库，不再依赖它 |
 
 线上形态：nginx 反代 → `mem-api.service`（Node 22，`127.0.0.1:8137`）；页表在进程内，渲染输入直接从库构造（导出 JSON 只作对外契约与备份），写成功后重建（40~230 ms），无定时任务；`mem-backup.timer` 每天 03:30 备份 `mem.db` + 三份 JSON 到 `/www/backup/`，保留 14 天。运维细节见 [deploy/README.md](deploy/README.md)。
 

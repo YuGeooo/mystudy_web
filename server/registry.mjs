@@ -1,7 +1,7 @@
 // 库内注册表：知识树 + 卷清单。volumes.json 退役后，这里是唯一的读取入口。
 //
 // 形状刻意与退役前的 volumes.json 保持一致（subjects/nodes/volumes 的键与顺序），
-// 下游（aggregate、topics.mjs、compare-export 的键序比对）不需要跟着改。
+// 下游（aggregate、topics.mjs）不需要跟着改。
 // 与 JSON 时代的差异只有一处：知识树节点不再带 aliases——全仓库零消费，
 // 历史值随归档的 volumes.json 留在 archive/ 里。
 //
@@ -22,7 +22,7 @@ function unenvelope(raw) {
 export function loadTree() {
   const metaRow = get("SELECT value FROM knowledge_meta WHERE key = 'treeVersion'");
   if (!metaRow) {
-    throw new Error('knowledge_meta 里没有 treeVersion——先跑 node server/migrate-v2.mjs 完成迁移');
+    throw new Error('knowledge_meta 里没有 treeVersion——数据库是旧版结构，先 ./scripts/pull-data.sh 拉最新数据');
   }
   const subjects = all('SELECT id, name, exam FROM subjects ORDER BY ord').map((r) => ({
     id: r.id,

@@ -68,21 +68,12 @@ done
 [ -f "$STAGE/web/assets/katex/katex.min.css" ] || { echo "[api] 包里缺 KaTeX 样式（web/assets/katex）" >&2; rm -rf "$STAGE"; exit 1; }
 echo "[api] 预检通过（server $(ls -1 "$STAGE"/server/*.mjs | wc -l | tr -d ' ') 个 / render $(ls -1 "$STAGE"/web/render/*.mjs | wc -l | tr -d ' ') 个 / 依赖就位）"
 
-# ---- 1.5 库结构迁移：新代码要求知识树/卷注册在库里（subjects / knowledge_nodes）----
-# 幂等：v2 已迁过就是 no-op。在停服务之前跑，失败就原样退出，线上不受影响。
-if [ -f data/volumes.json ]; then
-  "$NODE" "$STAGE/server/migrate-v2.mjs" data/mem.db data/volumes.json || {
-    echo "[api] 库迁移失败，未动线上任何东西" >&2
-    rm -rf "$STAGE"
-    exit 1
-  }
-else
-  if ! "$NODE" -e "import('$PWD/server/registry.mjs').then(m=>m.loadTree())" >/dev/null 2>&1; then
-    echo "[api] 库里没有知识树（knowledge_meta 缺失）且 volumes.json 不在，拒绝上线" >&2
-    rm -rf "$STAGE"
-    exit 1
-  fi
-  echo "[api] 库已是 v2，跳过迁移"
+# ---- 1.5 库结构守卫：新代码要求知识树/卷注册在库里（subjects / knowledge_nodes）----
+# v2 迁移已于 2026-11-12 完成、脚本已退役；这里只校验不迁移，失败就不上线。
+if ! "$NODE" -e "import('$PWD/server/registry.mjs').then(m=>m.loadTree())" >/dev/null 2>&1; then
+  echo "[api] 库里没有知识树（knowledge_meta 缺失）——数据库是旧版结构，先迁移再部署" >&2
+  rm -rf "$STAGE"
+  exit 1
 fi
 
 # ---- 2. 备份旧代码 ----

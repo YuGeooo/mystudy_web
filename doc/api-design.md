@@ -360,7 +360,7 @@ backups/<YYYYMMDD-HHMMSS>-<原因>/
 ```bash
 node server/test-write-api.mjs     # 118 项：鉴权、创建、校验、事务性、订正、销账、撤销、
                                    #         场次订正、补录/撤销单题、题库读写、备份、导出、只读 SQL、正式库保护
-node scripts/compare-export.mjs    # Node 导出器与 Python 导出器逐字段 + 键顺序比对
+node server/export-cli.mjs         # 导出器跑一遍，确认 index.json / content.json 能正常产出
 node server/smoke-test.mjs         # 只读链路 19 项回归（需 8137 在跑）
 ```
 
@@ -377,5 +377,5 @@ node server/smoke-test.mjs         # 只读链路 19 项回归（需 8137 在跑
 | 恢复接口 | 恢复要停服务换文件，只能命令行 `scripts/restore.sh` |
 | 审计日志（谁在何时改了什么） | 单用户场景价值低；写前快照已能回答「改坏了怎么退」 |
 | 乐观锁 / 版本号 | 单人使用，后写覆盖先写即可接受 |
-| 批量导入 | 一次性迁移已由 `migrate.py` 完成；批量建档请直接写脚本调本接口 |
+| 批量导入 | 一次性迁移已完成（迁移脚本已退役）；批量建档请直接写脚本调本接口 |
 | 写接口的限流 | 只监听回环 + nginx 反代 + token，暂不加 |

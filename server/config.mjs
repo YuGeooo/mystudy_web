@@ -17,7 +17,9 @@ if (!Number.isInteger(raw.port) || raw.port < 1024 || raw.port > 65535) {
 
 const dbPath = path.resolve(ROOT, process.env.MEM_DB || raw.database);
 if (!fs.existsSync(dbPath)) {
-  throw new Error(`数据库不存在：${dbPath}（先跑 python3 scripts/migrate.py）`);
+  throw new Error(
+    `数据库不存在：${dbPath}（先 ./scripts/pull-data.sh 从线上取回，或 ./scripts/restore.sh 恢复备份）`
+  );
 }
 
 // ---- 写模式 ----

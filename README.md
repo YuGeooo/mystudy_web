@@ -10,26 +10,24 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
 - **已迁移**：[data/mem.db](data/mem.db)（SQLite + WAL，4 表 7 / 328 / 40 / 317 行）。
   [核对报告](doc/migration-report.md)：40 项全通过，导出的 [data/index.json](data/index.json)
   与 `ad4f3ff` 基线逐字段零差异（仅 `meta.generatedAt` / `generator` 两行不同）。
-- 实现：`scripts/schema.sql`（DDL + 索引）、`migrate.py`（一次性只读导入）、
-  `export_index.py` / `export_content.py`（数据库 → JSON 契约）、`verify.py`（核对 + 生成报告）、
-  `sync.sh`（串联导出）、`verify-loopback.mjs`（闭环验证）。
+- 实现：`scripts/schema.sql`（DDL + 索引）。
   服务端：`server/dev.mjs`（入口）、`pages.mjs`（内存页表 + 请求处理）、
   `build-site.mjs`（渲染）、`routes.mjs`（分发）、`read-api.mjs` / `write.mjs` / `catalog.mjs`（数据）、
-  `export.mjs`（Node 版导出器）、`backup.mjs`（写前快照）、`sql.mjs`（只读 SQL 的子进程隔离执行）。
+  `registry.mjs`（知识树与卷注册）、`export.mjs` / `export-cli.mjs`（导出器）、
+  `backup.mjs`（写前快照）、`sql.mjs`（只读 SQL 的子进程隔离执行）。
 - **P1 本地服务**：`./dev.sh` 起 `http://127.0.0.1:8137`。零框架，第三方依赖只有 `marked`（Markdown → HTML）
   与 `katex`（试卷页公式），其余全是 Node 22 标准库（`node:http` + `node:sqlite`），数据库只读。
   端点 `/api/health` / `/api/meta` / `/api/days`；`node server/smoke-test.mjs` 自测 20 项全通过。
   代码在 `server/`，配置在 `config.local.json`。
 - **P2 本地站点**：`http://127.0.0.1:8137/study/`。三份数据契约：`index.json`、
-  `content.json`（`scripts/export_content.py` 从库里还原 48 份 Markdown 全文）。知识树与卷清单
+  `content.json`（导出器从库里还原 Markdown 全文）。知识树与卷清单
   2026-11-12 起也入了库（`subjects` / `knowledge_nodes` / `papers.ord`），`volumes.json` 退役归档。
   渲染器与样式是 `web/` 下的副本。**页面按请求在进程内渲染**（196 页常驻内存，首次 106ms）。
   与原构建器同时间点对比：共同 171 个文件，`data.json` 顶层字段一致，0 警告；
   唯一差异是 3 个「纯 git 提交日」页面消失（学习日 27 → 24），符合 `sessions.date` 口径。
-- **P3 闭环**：不实现录入界面（设计 §11 范围外）。已打通「改库 → 同步 JSON → 重建站点」：
-  `scripts/sync.sh` 串联两个导出器，`./dev.sh` 启动前自动执行。
-  `node scripts/verify-loopback.mjs` 用临时判定改动验证站点统计跟着变，再完整恢复；
-  恢复后 `verify.py` 40 项、`smoke-test.mjs` 19 项仍全过。
+- **P3 闭环**：不实现录入界面（设计 §11 范围外）。已打通「改库 → 导出 JSON → 重建站点」：
+  `scripts/sync.sh` 调 Node 导出器（`server/export-cli.mjs`），`./dev.sh` 启动前自动执行。
+  改了库之后进程会在下一次请求时自己发现库变了并重建（`reason: contracts-changed`）。
 - v1 设计文档（Markdown 真源方案）已**原样归档**：[archive/2026-11-11-v1/](archive/2026-11-11-v1/)，含 `01`–`07` 七份文档与旧 README 副本。归档是历史快照，未改动内容；其中的相对链接请以归档目录内文件为准。
 - 原仓库 `/Users/geyuqi/WorkBuddy/mem/` 全程只读，基线 commit `ad4f3ff`，工作区干净。
   学习空间另开在 `../mem_study/`（只放总结、生词本、草稿；数据仍走 `mem` 命令行与线上库）。
@@ -199,7 +197,6 @@ Ctrl+C && ./dev.sh     # 自动同步 + 渲染 196 个页面到内存 + 起服�
 
 `./dev.sh` 启动前已默认执行同步。就算忘了重启，改了库之后进程会在下一次
 请求时自己发现库变了并重建（`reason: contracts-changed`）。
-闭环验证用 `node scripts/verify-loopback.mjs`（需先停服务，会临时改一条判定并完整恢复）。
 
 ## 写接口（P5）
 
@@ -224,7 +221,7 @@ Ctrl+C && ./dev.sh     # 自动同步 + 渲染 196 个页面到内存 + 起服�
 
 ```bash
 node server/test-write-api.mjs    # 122 项：鉴权/创建/校验/事务性/订正/销账/场次订正/单题增删/题库读写/备份/导出/只读 SQL/页面数据全集/正式库保护
-node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段值与键顺序逐项比对
+./scripts/sync.sh                 # Node 导出器跑一遍，确认 JSON 契约能正常产出
 ```
 
 `test-write-api.mjs` 用 `sqlite3 .backup` 从 `mem.db` 只读复制出 `data/test.db`，
@@ -332,9 +329,8 @@ FORCE=1 ./scripts/push-data.sh
 
 1. 页面文案里「提交」相关字样（热力图 tooltip / 说明）仍是旧口径（`commits=0` 后应改成「学习」）；当前为保持与站点一致未改。
 2. `/www/mem` 旧数据仓库线上已不再拉取，可在确认无回滚需求后归档。
-3. `export_content.py` 现在支持 `--db` / `--out` / `--no-verify-src`：原仓库归档后加 `--no-verify-src` 即可跳过逐字节比对。
-4. 核对报告「设计稿与基线数据的偏差」三节，仍需确认口径。
-5. 线上写接口没有录入界面，现在用 `bin/mem`（见 [doc/cli.md](doc/cli.md)）。要更顺手可以做一个只读页面级的「快速记一场」表单，直连 `/api/sessions`（token 存在浏览器本地）。
-6. 静态构建（回滚兜底）走 `/www/builder` 的副本：那份 `build-site.mjs` 与渲染器还没同步试卷页，
+3. 核对报告「设计稿与基线数据的偏差」三节，仍需确认口径。
+4. 线上写接口没有录入界面，现在用 `bin/mem`（见 [doc/cli.md](doc/cli.md)）。要更顺手可以做一个只读页面级的「快速记一场」表单，直连 `/api/sessions`（token 存在浏览器本地）。
+5. 静态构建（回滚兜底）走 `/www/builder` 的副本：那份 `build-site.mjs` 与渲染器还没同步试卷页，
    所以静态产物里没有 `/papers/`，页表版本才有。要补就把 builder 的渲染器换成 `web/render/` 的副本。
    线上正常路径（Node 进程实时渲染）不受影响。KaTeX 的样式与字体已由 `deploy/build-release.sh` 带进静态产物。

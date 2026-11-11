@@ -1,18 +1,15 @@
 // 导出器（Node 版）：数据库 → index.json + content.json。
 //
-// 为什么要在 Node 里重写一遍：服务器上没有 Python，写接口提交后必须当场重新导出，
-// 否则页面永远停在旧数据。逻辑逐行对齐 scripts/export_index.py 与 export_content.py，
-// 差异仅两处（都是必要的）：
-//   1. meta.generator 记为 server/export.mjs
-//   2. content.json 不再与原仓库逐字节比对 —— 迁移期校验已完成，
-//      上线后新增场次在原仓库里没有对应文件，比对必然失败。
+// 为什么要在 Node 里：写接口提交后必须当场重新导出，否则页面永远停在旧数据。
+// 2026-11-12 起迁移期的 Python 导出器（export_index.py / export_content.py）已退役，
+// 本文件是唯一的导出实现（CLI 入口见 export-cli.mjs）。
 import fs from 'node:fs';
 import path from 'node:path';
 import { get, all } from './db.mjs';
 import { loadTree } from './registry.mjs';
 import { SQL } from './queries.mjs';
 
-/** 与 Python 的 datetime.now(timezone(+8)).isoformat(timespec="seconds") 等价 */
+/** ISO 8601 东八区秒级精度，如 2026-11-12T01:20:00+08:00 */
 function nowIso8() {
   const d = new Date(Date.now() + 8 * 3600 * 1000);
   return `${d.toISOString().slice(0, 19)}+08:00`;
