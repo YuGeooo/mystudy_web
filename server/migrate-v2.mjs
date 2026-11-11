@@ -21,8 +21,14 @@ import { DatabaseSync } from 'node:sqlite';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import { fileURLToPath } from 'node:url';
 
-const dbFile = path.resolve(ROOT, process.argv[2] || 'data/mem.db');
-const jsonFile = path.resolve(ROOT, process.argv[3] || 'data/volumes.json');
+// 路径规则：显式传参按当前目录解析（部署脚本在 /www/api 下执行），
+// 不传参按仓库根解析（本机默认 data/mem.db + data/volumes.json）。
+const dbFile = process.argv[2]
+  ? path.resolve(process.cwd(), process.argv[2])
+  : path.resolve(ROOT, 'data/mem.db');
+const jsonFile = process.argv[3]
+  ? path.resolve(process.cwd(), process.argv[3])
+  : path.resolve(ROOT, 'data/volumes.json');
 
 const volumesJson = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
 const tree = volumesJson.knowledgeTree;
