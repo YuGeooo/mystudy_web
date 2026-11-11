@@ -13,7 +13,7 @@
 
 | 目录 | 是什么 | 能不能改 |
 |---|---|---|
-| `server/` | Node 22 服务：`dev.mjs` 入口 · `pages.mjs` 内存页表 · `routes.mjs` 分发 · `read-api.mjs` / `write.mjs` / `catalog.mjs` 数据 · `export.mjs` 导出 · `backup.mjs` 快照 | 可以，改完跑测试 |
+| `server/` | Node 22 服务：`dev.mjs` 入口 · `pages.mjs` 内存页表 · `routes.mjs` 分发 · `read-api.mjs` / `write.mjs` / `catalog.mjs` 数据 · `export.mjs` 导出 · `backup.mjs` 快照 · `sqlrun.mjs` / `sql.mjs` 只读 SQL | 可以，改完跑测试 |
 | `web/render/` | 站点渲染器与 `assets/app.css`。来源是站点仓库 `~/Documents/aliyun/myWebsite/` 的副本；两处分叉：`renderSite()` 多一个 `emit` 参数、新增 `paper.mjs`（试卷页，KaTeX 在服务端出公式） | 谨慎：默认行为必须保持不变 |
 | `scripts/` | 迁移 / 导出 / 核对（Python，**只在本机跑**）+ 启动、同步、备份、恢复、测试（sh） | 可以 |
 | `deploy/` | systemd unit、nginx 之外的部署脚本、`config.server.json` | 可以，但生效需重新部署 |
@@ -153,7 +153,7 @@ npm run check      # 只查语法（36 个 .mjs + 15 个 .sh）
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| 改了库，页面没变 | 绕过接口写的：跑 `./scripts/sync.sh`，或 `POST /api/export` |
+| 改了库，页面没变 | 现在会自动跟上：下次请求比对库文件指纹即重建。sync.sh 只用于刷新导出契约 |
 | 写接口 404 | 目标配错：`--local` 打到了只读进程；写只能打线上 |
 | 写接口 401 | token 缺失或不匹配：检查 `~/.mem-api-token` / `MEM_WRITE_TOKEN`（≥16 字符） |
 | 写入报 `invalid_field` | 字段值不合法，按 `error` 文案改，**不要原样重试** |
