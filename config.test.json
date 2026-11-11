@@ -1,0 +1,14 @@
+{
+  "host": "127.0.0.1",
+  "port": 8138,
+  "database": "data/test.db",
+  "timeZone": "Asia/Shanghai",
+  "readOnly": false,
+  "write": {
+    "enabled": true
+  },
+  "export": {
+    "index": "data/test-index.json",
+    "content": "data/test-content.json"
+  }
+}

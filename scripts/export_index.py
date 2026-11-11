@@ -131,10 +131,17 @@ def build_attempts(con, sessions_by_id, session_bl, questions_by_id):
     return out
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(description="导出 index.json")
+    ap.add_argument("--db", help="数据库路径（默认 data/mem.db）")
+    ap.add_argument("--out", help="输出文件（默认 data/index.json）")
+    args = ap.parse_args(argv)
+
     volumes = read_json(EXPORT_VOLUMES)
     subjects, nodes = knowledge_nodes(volumes)
-    con = connect()
+    con = connect(Path(args.db)) if args.db else connect()
 
     papers = con.execute("SELECT * FROM papers ORDER BY rowid").fetchall()
     questions, _ = build_questions(con, nodes)
@@ -184,10 +191,12 @@ def main() -> int:
         "sessions": sessions,
         "attempts": attempts,
     }
-    EXPORT_INDEX.write_text(
+    out_path = Path(args.out) if args.out else EXPORT_INDEX
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
         json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    print(f"已导出 {EXPORT_INDEX}")
+    print(f"已导出 {out_path}")
     print("  meta.coverage =", index["meta"]["coverage"])
     print("  meta.timing   =", index["meta"]["timing"])
     print("  sourceFiles   =", len(source_files))

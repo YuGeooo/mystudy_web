@@ -1,6 +1,6 @@
 # mem_new
 
-MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）与线上部署（P4）均已跑通。线上：<https://geyuqi.me/study/>。
+MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）与线上部署（P4）均已跑通，写接口（P5）已实现但默认关闭。线上：<https://geyuqi.me/study/>。
 
 ## 当前状态
 
@@ -47,7 +47,8 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
 
 1. **站点数据源**：三份契约 `index.json` / `content.json`（题干与批改全文）/ `volumes.json` 已取代 `git show HEAD:` 与 `git log`。学习日与热力图改由 `sessions.date` 驱动，`commits` 恒为 0。
 2. **数据库选型**：SQLite + WAL（`data/mem.db`）；多用户并发写时再评估 PostgreSQL。
-3. **录入界面**：按设计 §11 保持范围外，不实现 Web 表单与写接口；日常写库用脚本 / sqlite3 CLI，改完 `./scripts/push-data.sh` 推到线上。
+3. **录入方式**：不做 Web 表单（设计 §11 范围外），但提供受控写接口（P5，默认关闭、需 token）。日常仍以本机 sqlite3 / 脚本改真源，改完 `./scripts/push-data.sh`；写接口用于不在电脑前的场景，见 [doc/api-design.md](doc/api-design.md)。
+4. **写接口的安全边界**：三道闸门（配置开启 + Bearer token + 连接可写），任一缺失则不注册或拒绝启动；正式配置目前是关闭的。
 
 ## 本地开发架构（已定）
 
@@ -72,6 +73,29 @@ Ctrl+C && ./dev.sh     # 自动同步 + 重建 171 个页面 + 起服务
 `./dev.sh` 启动前已默认执行同步。闭环验证用 `node scripts/verify-loopback.mjs`
 （需先停服务，会临时改一条判定并完整恢复）。服务器走静态产物，不需要 Python、不需要 `sync.sh`。
 
+## 写接口（P5）
+
+设计文档 §11 把「录入 UI」列在范围外，但「不在电脑前想补一条记录」是真实需求，所以提供受控 API 而不是表单页面。
+
+| 项 | 说明 |
+|---|---|
+| 契约 | [doc/api-design.md](doc/api-design.md) |
+| 写入 | `POST /api/sessions`（场次+逐题，单事务）· `PATCH /api/attempts/:id` · `POST /api/attempts/:id/resolve` · `DELETE /api/sessions/:id` |
+| 导出 | `POST /api/export`（Node 版导出器，服务器不需要 Python） |
+| 只读补充 | `/api/papers` · `/api/questions`（含题干全文检索）· `/api/sessions` · `/api/attempts` · `/api/redo` |
+| 开关 | `write.enabled=true` + `MEM_WRITE_TOKEN`（≥16 字符）+ 连接可写，缺一不可 |
+| 默认 | `config.local.json` 关闭；`config.test.json` 开启（8138，指向 `data/test.db`） |
+
+验证（不碰正式库）：
+
+```bash
+node server/test-write-api.mjs    # 44 项：鉴权/创建/校验/事务性/订正/销账/撤销/导出/正式库保护
+node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段值与键顺序逐项比对
+```
+
+`test-write-api.mjs` 用 `sqlite3 .backup` 从 `mem.db` 只读复制出 `data/test.db`，
+跑前记录正式库与 `data/index.json` 的 sha256 + mtime，跑完复查一致才通过。
+
 ## 日常操作
 
 改完数据 → 推到线上（一条命令）：
@@ -87,5 +111,6 @@ Ctrl+C && ./dev.sh     # 自动同步 + 重建 171 个页面 + 起服务
 
 1. 页面文案里「提交」相关字样（热力图 tooltip / 说明）仍是旧口径（`commits=0` 后应改成「学习」）；当前为保持与站点一致未改。
 2. `/www/mem` 旧数据仓库线上已不再拉取，可在确认无回滚需求后归档。
-3. `export_content.py` 会读原 `mem` 仓库逐字节校验还原结果；若原仓库移走，需把该校验改为可选。
+3. `export_content.py` 现在支持 `--db` / `--out` / `--no-verify-src`：原仓库归档后加 `--no-verify-src` 即可跳过逐字节比对。
 4. 核对报告「设计稿与基线数据的偏差」三节，仍需确认口径。
+5. 写接口尚未在线上开启（服务器配置仍是只读）。要开启需：`/www/api/config.local.json` 加 `write.enabled`、systemd 注入 `MEM_WRITE_TOKEN`、并确认 `POST /api/export` 后页面重建的串接方式。

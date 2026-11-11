@@ -20,8 +20,22 @@ from memdb import DATA, SRC, connect  # noqa: E402
 OUT = DATA / "content.json"
 
 
-def main() -> int:
-    con = connect()
+def main(argv=None) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(description="导出 content.json")
+    ap.add_argument("--db", help="数据库路径（默认 data/mem.db）")
+    ap.add_argument("--out", help="输出文件（默认 data/content.json）")
+    ap.add_argument(
+        "--no-verify-src",
+        action="store_true",
+        help="不与原 mem 仓库逐字节比对（原仓库归档后或库里有新录入时使用）",
+    )
+    args = ap.parse_args(argv)
+    verify = not args.no_verify_src
+    out_path = Path(args.out) if args.out else OUT
+
+    con = connect(Path(args.db)) if args.db else connect()
     sessions: dict[str, str] = {}
     for r in con.execute(
         "SELECT id, "
@@ -41,7 +55,7 @@ def main() -> int:
             raise RuntimeError(f"{file_path} 在 process_md 里找不到全文分隔标记")
         body = row["process_md"][pos + len(marker):]
         text = fm + body
-        if text != (SRC / file_path).read_text(encoding="utf-8"):
+        if verify and text != (SRC / file_path).read_text(encoding="utf-8"):
             raise RuntimeError(f"{file_path} 还原后与原仓库不一致")
         sessions[file_path] = text
 
@@ -62,7 +76,7 @@ def main() -> int:
                 )
             ]
             text = (prefix or "") + "".join(blocks)
-            if text != (SRC / path).read_text(encoding="utf-8"):
+            if verify and text != (SRC / path).read_text(encoding="utf-8"):
                 raise RuntimeError(f"{path} 还原后与原仓库不一致")
             papers[path] = text
 
@@ -73,8 +87,10 @@ def main() -> int:
         "sessions": sessions,
         "papers": papers,
     }
-    OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"已导出 {OUT}：{len(sessions)} 份场次原文 / {len(papers)} 份试卷原文，逐字节校验通过")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tail = "逐字节校验通过" if verify else "未做原仓库校验"
+    print(f"已导出 {out_path}：{len(sessions)} 份场次原文 / {len(papers)} 份试卷原文，{tail}")
     return 0
 
 
