@@ -68,6 +68,30 @@ function requireAuth(req) {
 
 const q = (url, key) => url.searchParams.get(key) || null;
 
+/**
+ * 写成功后立刻重导 JSON（index.json / content.json）。
+ *
+ * 线上页面由定时任务按 `data/` 四个文件的 sha256 变化触发重建，只写库不导 JSON，
+ * 页面就永远停留在旧数据。导出失败不能让写请求报错 —— 库已经改好了，
+ * 报 500 会让人误以为没写进去，所以只把错误挂在响应里。
+ */
+function sendAfterWrite(res, status, payload) {
+  let exported = null;
+  let exportError = null;
+  try {
+    exported = exportAll(config);
+  } catch (err) {
+    exportError = err.message;
+    console.error(`[export] 写后导出失败：${err.message}`);
+  }
+  return send(res, status, {
+    ok: true,
+    ...payload,
+    ...(exported ? { exported } : {}),
+    ...(exportError ? { exportError } : {}),
+  });
+}
+
 // 只有这几个前缀是可写端点。只读进程对它们返回 404（不暴露能力），
 // 对其余路径的非 GET 仍返回 405（确实是方法用错了）。
 const WRITABLE_ROOTS = new Set(['sessions', 'attempts', 'export', 'papers', 'questions', 'backups']);
@@ -115,29 +139,29 @@ export async function handle(req, res) {
 
       if (method === 'POST' && a === 'sessions' && !b) {
         const body = await readBody(req);
-        return send(res, 201, { ok: true, ...createSession(body) });
+        return sendAfterWrite(res, 201, createSession(body));
       }
       if (method === 'POST' && a === 'sessions' && b && c === 'attempts') {
         const body = await readBody(req);
-        return send(res, 201, { ok: true, ...addAttempt(b, body) });
+        return sendAfterWrite(res, 201, addAttempt(b, body));
       }
       if (method === 'PATCH' && a === 'sessions' && b && !c) {
         const body = await readBody(req);
-        return send(res, 200, { ok: true, ...patchSession(b, body) });
+        return sendAfterWrite(res, 200, patchSession(b, body));
       }
       if (method === 'DELETE' && a === 'sessions' && b) {
-        return send(res, 200, { ok: true, ...deleteSession(b) });
+        return sendAfterWrite(res, 200, deleteSession(b));
       }
       if (method === 'DELETE' && a === 'attempts' && b && !c) {
-        return send(res, 200, { ok: true, ...deleteAttempt(b) });
+        return sendAfterWrite(res, 200, deleteAttempt(b));
       }
       if (method === 'PATCH' && a === 'attempts' && b && !c) {
         const body = await readBody(req);
-        return send(res, 200, { ok: true, ...patchAttempt(b, body) });
+        return sendAfterWrite(res, 200, patchAttempt(b, body));
       }
       if (method === 'POST' && a === 'attempts' && b && c === 'resolve') {
         const body = await readBody(req);
-        return send(res, 200, { ok: true, ...resolveRedo(b, body) });
+        return sendAfterWrite(res, 200, resolveRedo(b, body));
       }
       if (method === 'POST' && a === 'export' && !b) {
         return send(res, 200, { ok: true, ...exportAll(config) });
@@ -147,25 +171,25 @@ export async function handle(req, res) {
       }
       if (method === 'POST' && a === 'papers' && !b) {
         const body = await readBody(req);
-        return send(res, 201, { ok: true, ...createPaper(body) });
+        return sendAfterWrite(res, 201, createPaper(body));
       }
       if (method === 'PATCH' && a === 'papers' && b && !c) {
         const body = await readBody(req);
-        return send(res, 200, { ok: true, ...patchPaper(b, body) });
+        return sendAfterWrite(res, 200, patchPaper(b, body));
       }
       if (method === 'DELETE' && a === 'papers' && b && !c) {
-        return send(res, 200, { ok: true, ...deletePaper(b) });
+        return sendAfterWrite(res, 200, deletePaper(b));
       }
       if (method === 'POST' && a === 'questions' && !b) {
         const body = await readBody(req);
-        return send(res, 201, { ok: true, ...createQuestion(body) });
+        return sendAfterWrite(res, 201, createQuestion(body));
       }
       if (method === 'PATCH' && a === 'questions' && b && !c) {
         const body = await readBody(req);
-        return send(res, 200, { ok: true, ...patchQuestion(b, body) });
+        return sendAfterWrite(res, 200, patchQuestion(b, body));
       }
       if (method === 'DELETE' && a === 'questions' && b && !c) {
-        return send(res, 200, { ok: true, ...deleteQuestion(b) });
+        return sendAfterWrite(res, 200, deleteQuestion(b));
       }
       return send(res, 405, {
         error: 'method not allowed', method, path: url.pathname,

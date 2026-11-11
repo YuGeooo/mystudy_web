@@ -6,6 +6,9 @@ data/mem.db-*
 data/index.json
 data/content.json
 
+# 数据落地目录（pull-data.sh 的中间产物）
+data/incoming/
+
 # 测试库与测试导出物（由 node server/test-write-api.mjs 生成，随时可重建）
 data/test.db
 data/test.db-*

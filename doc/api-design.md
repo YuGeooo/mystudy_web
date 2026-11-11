@@ -9,8 +9,10 @@
 P4 上线后，改数据只有一条路：本机 sqlite3 改 `mem.db` → `push-data.sh` 推服务器。
 这条路要求本机在场，手机上、临时想补一条记录时走不通。
 
-写接口解决的是这个场景，**不替代本机真源**：服务器那份仍是副本，写接口只是让副本也能被
-受控地改一次，改完立即触发重新导出。
+写接口解决的是这个场景。**开启之后线上的定位变了**：写在服务器上发生，线上那份
+`mem.db` 就是被写入的真源，本机改成副本（`scripts/pull-data.sh` 拉回来）。
+每次写成功后接口立即重导 `index.json` / `content.json`，页面由 `geyuqi-deploy.timer`
+按文件哈希变化在 5 分钟内重建。
 
 ## 2. 三道闸门（缺一不可）
 
@@ -21,8 +23,9 @@ P4 上线后，改数据只有一条路：本机 sqlite3 改 `mem.db` → `push-
 | 连接可写 | `openDb()` 以读写模式打开 | 进程直接拒绝启动 |
 
 token 从环境变量 `MEM_WRITE_TOKEN` 读取（≥16 字符），不写进配置文件、不进版本库。
-正式配置 `config.local.json` 目前是**关闭**的；测试配置 `config.test.json` 开启，
-端口 8138、指向 `data/test.db`。
+线上配置 `deploy/config.server.json` 是**开启**的，token 在服务器 `/www/api/mem-api.env`
+（600 root:root），本机副本 `~/.mem-api-token`；本机 `config.local.json` 仍是关闭的（8137 只读）；
+`config.test.json` 开启，端口 8138、指向 `data/test.db`。
 
 另外：`write.enabled=true` 与 `readOnly=true` 同时出现会**拒绝启动**，不留半开状态。
 

@@ -1,6 +1,6 @@
 # mem_new
 
-MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）与线上部署（P4）均已跑通，写接口（P5）增删改查齐全、默认关闭，写库前自动快照。线上：<https://geyuqi.me/study/>。
+MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）、线上部署（P4）与写接口（P5）均已跑通，**写接口已在线上开启**（Bearer token + 限流 + 写前自动快照）。线上：<https://geyuqi.me/study/>。
 
 ## 当前状态
 
@@ -26,8 +26,12 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
   恢复后 `verify.py` 40 项、`smoke-test.mjs` 19 项仍全过。
 - v1 设计文档（Markdown 真源方案）已**原样归档**：[archive/2026-11-11-v1/](archive/2026-11-11-v1/)，含 `01`–`07` 七份文档与旧 README 副本。归档是历史快照，未改动内容；其中的相对链接请以归档目录内文件为准。
 - 原仓库 `/Users/geyuqi/WorkBuddy/mem/` 全程只读，基线 commit `ad4f3ff`，工作区干净。
-- **P4 已上线**：<https://geyuqi.me/study/>（页面）与 `/api/*`（只读接口）。
+- **P4 已上线**：<https://geyuqi.me/study/>（页面）与 `/api/*`（读写接口）。
   线上细节见 [deploy/README.md](deploy/README.md)；服务器脚本副本在 [deploy/](deploy/)。
+- **P5 已开启**：线上 `mem-api.service` 以写模式运行，写接口需 `Authorization: Bearer <token>`
+  （token 存在服务器 `/www/api/mem-api.env`，本机副本 `~/.mem-api-token`）。
+  写成功后自动重导 `index.json` / `content.json`，`geyuqi-deploy.timer` 在 5 分钟内按文件哈希变化重建页面。
+  **线上是可写入的那一份真源**，本机用 `./scripts/pull-data.sh` 拉回做副本。
   站点仓库 `/Users/geyuqi/Documents/aliyun/myWebsite/` **一行未改**，线上仍用它的渲染器与样式。
 - **加固**：本仓库已纳入 git（`data/mem.db` 与导出 JSON 不入库，见 `.gitignore`）；
   线上 `mem-backup.timer` 每天 03:30 备份 `mem.db` 与三份 JSON 到 `/www/backup/`，保留 14 天，备份后自动校验。
@@ -47,8 +51,8 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
 
 1. **站点数据源**：三份契约 `index.json` / `content.json`（题干与批改全文）/ `volumes.json` 已取代 `git show HEAD:` 与 `git log`。学习日与热力图改由 `sessions.date` 驱动，`commits` 恒为 0。
 2. **数据库选型**：SQLite + WAL（`data/mem.db`）；多用户并发写时再评估 PostgreSQL。
-3. **录入方式**：不做 Web 表单（设计 §11 范围外），但提供受控写接口（P5，默认关闭、需 token）。日常仍以本机 sqlite3 / 脚本改真源，改完 `./scripts/push-data.sh`；写接口用于不在电脑前的场景，见 [doc/api-design.md](doc/api-design.md)。
-4. **写接口的安全边界**：三道闸门（配置开启 + Bearer token + 连接可写），任一缺失则不注册或拒绝启动；正式配置目前是关闭的。
+3. **录入方式**：不做 Web 表单（设计 §11 范围外），但提供受控写接口（P5，线上已开启、需 token）。不在电脑前用 `curl` 直接写线上；在电脑前也可以改完本机库再 `FORCE=1 ./scripts/push-data.sh` 覆盖线上（应急手段）。
+4. **写接口的安全边界**：三道闸门（配置开启 + Bearer token + 连接可写），任一缺失则不注册或拒绝启动；线上三道全开，另加 nginx 限流 5r/s、请求体 2 MB 上限。
 
 ## 本地开发架构（已定）
 
@@ -63,7 +67,15 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
 
 ## 改数据后怎么让站点更新
 
-数据库是真源，页面读的是三份导出 JSON。直接改库后：
+线上：调写接口 → 接口内部自动重导 `index.json` / `content.json` →
+`geyuqi-deploy.timer`（每 5 分钟）发现 `data/` 四个文件的 sha256 变了就重建页面并软链切换。
+最长等 5 分钟，也可以手动立刻重建：
+
+```bash
+ssh root@121.89.87.48 'sudo -u deploy /www/builder/deploy.sh'
+```
+
+本机：库改完后
 
 ```bash
 ./scripts/sync.sh      # 库 → index.json / content.json（本机离线工具）
@@ -87,7 +99,8 @@ Ctrl+C && ./dev.sh     # 自动同步 + 重建 171 个页面 + 起服务
 | 导出 | `POST /api/export`（Node 版导出器，服务器不需要 Python） |
 | 只读补充 | `/api/papers` · `/api/questions`（含题干全文检索）· `/api/sessions` · `/api/attempts` · `/api/attempts/:id` · `/api/redo` |
 | 开关 | `write.enabled=true` + `MEM_WRITE_TOKEN`（≥16 字符）+ 连接可写，缺一不可 |
-| 默认 | `config.local.json` 关闭；`config.test.json` 开启（8138，指向 `data/test.db`） |
+| 线上 | 已开启（`deploy/config.server.json`，token 在 `/www/api/mem-api.env`） |
+| 本机 | `config.local.json` 关闭（8137 只读）；`config.test.json` 开启（8138，指向 `data/test.db`） |
 
 验证（不碰正式库）：
 
@@ -105,8 +118,9 @@ node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段�
 
 | 层 | 触发 | 位置 | 保留 |
 |---|---|---|---|
-| 写前快照 | 每次调写接口之前**自动** | 本机 `backups/<TS>-<方法>-<资源>/` | 最近 20 份（`backup.keep`） |
-| 本机手动备份 | `./scripts/backup.sh` | 同上 | 最近 30 份（`KEEP=30` 可改） |
+| 线上写前快照 | 每次调写接口之前**自动** | 服务器 `/www/data/backups/<TS>-<方法>-<资源>/` | 最近 20 份（`backup.keep`） |
+| 本机写前快照 | 本机测试库写接口之前自动 | 本机 `data/test-backups/` | 5 份 |
+| 本机手动备份 | `./scripts/backup.sh` | 本机 `backups/<TS>-manual/` | 最近 30 份（`KEEP=30` 可改） |
 | 线上每日备份 | 每天 03:30（`mem-backup.timer`） | 服务器 `/www/backup/<YYYYMMDD>/` | 14 天 |
 | 线上页面版本 | 每次构建 | `/www/releases/<TS>` | 最近 5 份 |
 
@@ -126,13 +140,21 @@ curl -s 127.0.0.1:8137/api/backups | head -40        # 看有哪些快照
 
 ## 日常操作
 
-改完数据 → 推到线上（一条命令）：
+线上是写入真源，本机是副本。把线上最新状态同步回本机：
 
 ```bash
-./scripts/push-data.sh
+./scripts/pull-data.sh        # 线上 → 本机（先自动给本机现状打一份快照）
 ```
 
-本地开发：`./dev.sh`（自动同步 + 构建 + 起服务），`node server/smoke-test.mjs` 自测。
+反过来用本机覆盖线上是应急手段（会把线上新记录冲掉），必须显式确认：
+
+```bash
+FORCE=1 ./scripts/push-data.sh
+```
+
+改线上代码后重新部署 API：`./deploy/deploy-api.sh`（只传 `server/*.mjs`，不碰数据与配置）。
+
+本地开发：`./dev.sh`（自动同步 + 构建 + 起服务，只读），`node server/smoke-test.mjs` 自测。
 线上运维、回滚、整体退回旧架构：见 [deploy/README.md](deploy/README.md)。
 
 ## 待办
@@ -141,4 +163,4 @@ curl -s 127.0.0.1:8137/api/backups | head -40        # 看有哪些快照
 2. `/www/mem` 旧数据仓库线上已不再拉取，可在确认无回滚需求后归档。
 3. `export_content.py` 现在支持 `--db` / `--out` / `--no-verify-src`：原仓库归档后加 `--no-verify-src` 即可跳过逐字节比对。
 4. 核对报告「设计稿与基线数据的偏差」三节，仍需确认口径。
-5. 写接口尚未在线上开启（服务器配置仍是只读）。要开启需：`/www/api/config.local.json` 加 `write.enabled`、systemd 注入 `MEM_WRITE_TOKEN`、并确认 `POST /api/export` 后页面重建的串接方式。
+5. 线上写接口没有录入界面，只能 `curl`。要更顺手可以做一个只读页面级的「快速记一场」表单，直连 `/api/sessions`（token 存在浏览器本地）。

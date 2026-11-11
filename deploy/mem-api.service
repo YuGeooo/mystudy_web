@@ -1,5 +1,5 @@
 [Unit]
-Description=mem_new read-only API (SQLite)
+Description=mem_new API (SQLite) — 读开放，写需 Bearer token
 After=network.target
 Documentation=file:///www/api/README.md
 
@@ -10,15 +10,17 @@ Group=deploy
 WorkingDirectory=/www/api
 Environment=MEM_BUILD_SITE=0
 Environment=NODE_NO_WARNINGS=0
+# 写接口的 token 只放在这里（600 root:root），不进版本库、不进配置文件。
+EnvironmentFile=/www/api/mem-api.env
 ExecStart=/opt/node22/bin/node server/dev.mjs
 Restart=on-failure
 RestartSec=3
 StandardOutput=journal
 StandardError=journal
-# 只读 API：数据库文件以外不应写盘
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+# 代码只读；只有 /www/data（库 + 导出 JSON + 写前快照）可写
 ReadOnlyPaths=/www/api
 ReadWritePaths=/www/data
 
