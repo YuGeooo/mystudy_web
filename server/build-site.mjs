@@ -171,7 +171,7 @@ export function buildPages(paths = {}) {
     outDir: '',
     emit: (relPath, content) => pages.set(relPath, content),
   });
-  return { pages, today: ctx.today, stats: ctx.stats };
+  return { pages, today: ctx.today, stats: ctx.stats, data: ctx.data };
 }
 
 /** 渲染到磁盘（静态构建）。 */

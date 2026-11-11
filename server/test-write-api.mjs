@@ -162,6 +162,29 @@ try {
   const readNoToken = await api('GET', '/api/meta', undefined, { token: null });
   check('只读端点不需要 token', () => assert.equal(readNoToken.status, 200));
 
+  // ---- 页面数据全集：/api/study ----
+  const studyFull = await api('GET', '/api/study', undefined, { token: null });
+  check('GET /api/study 覆盖页面数据的全部字段', () => {
+    assert.equal(studyFull.status, 200);
+    for (const k of ['meta', 'stats', 'today', 'days', 'weeks', 'volumes', 'knowledge', 'countdown', 'warnings']) {
+      assert.ok(studyFull.body[k] !== undefined, `缺字段 ${k}`);
+    }
+  });
+
+  const studySection = await api('GET', '/api/study?section=stats', undefined, { token: null });
+  check('?section= 只返回该节', () => {
+    assert.equal(studySection.status, 200);
+    assert.equal(typeof studySection.body.studyDays, 'number');
+    assert.equal(studySection.body.days, undefined, '不该把整份数据带出来');
+  });
+
+  const studyBad = await api('GET', '/api/study?section=nope', undefined, { token: null });
+  check('未知 section → 400 并列出可选值', () => {
+    assert.equal(studyBad.status, 400);
+    assert.equal(studyBad.body.code, 'bad_section');
+    assert.ok(studyBad.body.details.sections.includes('stats'));
+  });
+
   // ---- 取题目上下文 ----
   console.log('\n=== 3. 录入前上下文 ===');
   const papers = await api('GET', '/api/papers', undefined, { token: null });
@@ -725,6 +748,14 @@ const healthAfter = (await api('GET', '/api/health', undefined, { token: null })
 const indexAfter = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/test-index.json'), 'utf8'));
 check('页表场次数与导出契约一致', () => {
   assert.equal(healthAfter.site.stats.sessions, indexAfter.meta.coverage.sessions);
+});
+
+// /api/study 不是另查一次库，而是把渲染页表时算好的那份 data 原样返回。
+// 所以它必须和页表状态、和页面同一时刻的数据严格对齐。
+const studyAfterWrite = (await api('GET', '/api/study?section=stats', undefined, { token: null })).body;
+check('/api/study 与页表同源（写后是同一份 stats）', () => {
+  assert.equal(studyAfterWrite.sessions, healthAfter.site.stats.sessions);
+  assert.equal(studyAfterWrite.studyDays, healthAfter.site.stats.days);
 });
 
 const etagRes = await fetch(`${BASE}/study/`, { signal: AbortSignal.timeout(5000) });

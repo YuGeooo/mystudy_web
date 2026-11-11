@@ -39,6 +39,9 @@ const MIME = {
 const mimeOf = (rel) => MIME[path.extname(rel).toLowerCase()] || 'application/octet-stream';
 
 let pages = new Map();
+// 页面数据的全集（buildData 的返回值）：stats / volumes / knowledge / days / weeks / countdown。
+// `/api/study` 直接返回这一份，不重新算——页面与接口同源，避免第二套聚合口径。
+let siteData = null;
 let state = {
   version: 0,
   builtAt: null,
@@ -76,10 +79,11 @@ function contractsFingerprint() {
 export function rebuild(reason = 'manual') {
   const t0 = performance.now();
   const stamp = contractsFingerprint();
-  const { pages: next, today, stats } = buildPages(CONTRACTS);
+  const { pages: next, today, stats, data } = buildPages(CONTRACTS);
   if (next.size === 0) throw new Error('渲染结果为空，拒绝替换页表');
 
   pages = next;
+  siteData = data;
   contractsStamp = stamp;
   state = {
     version: state.version + 1,
@@ -119,6 +123,14 @@ function loadCss() {
   } catch {
     return null;
   }
+}
+
+/**
+ * 页面数据的全集——就是渲染这批页面时用的那份 buildData() 结果。
+ * `/api/study` 原样返回，不重新查库：页面看到什么，接口就返回什么。
+ */
+export function getSiteData() {
+  return siteData;
 }
 
 function send(req, res, status_, body, type, etag) {

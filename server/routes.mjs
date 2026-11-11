@@ -297,6 +297,20 @@ export async function handle(req, res) {
         today: todayLocal(config.timeZone),
       }));
     }
+    // 页面数据的全集：直接返回渲染页表时算好的那份 buildData()。
+    // 加 `?section=` 只取一节（stats / volumes / knowledge / days / weeks / countdown…）。
+    if (a === 'study') {
+      const data = pages.getSiteData();
+      if (!data) throw new ApiError(503, 'site_unavailable', '页表还没建好，稍后重试');
+      const section = q(url, 'section');
+      if (!section) return send(res, 200, data);
+      if (!Object.hasOwn(data, section)) {
+        throw new ApiError(400, 'bad_section', `没有这一节：${section}`, {
+          sections: Object.keys(data),
+        });
+      }
+      return send(res, 200, data[section]);
+    }
     if (a === 'papers') {
       if (!b) return send(res, 200, { papers: read.listPapers() });
       const paper = read.getPaper(b);
@@ -366,6 +380,7 @@ export async function handle(req, res) {
       error: 'not found', path: url.pathname,
       endpoints: [
         'GET /api/health', 'GET /api/meta', 'GET /api/days',
+        'GET /api/study?section=stats|volumes|knowledge|days|weeks|countdown',
         'GET /api/papers', 'GET /api/papers/:slug',
         'GET /api/questions', 'GET /api/questions/:id',
         'GET /api/sessions', 'GET /api/sessions/:id',

@@ -207,6 +207,9 @@ order by 每题分钟 desc limit 10
 标记。自己写 SQL 照抄容易漏条件，直接取渲染页表时**已经算好的那一份**：
 
 ```bash
+curl -s https://geyuqi.me/api/study?section=stats      # 学习天数 / 连续 / 正确率
+curl -s https://geyuqi.me/api/study?section=volumes    # 各卷掌握度（雷达图数据）
+curl -s https://geyuqi.me/api/study?section=knowledge  # 知识点树与考点正确率
 ```
 
 `section` 可选 `meta` / `stats` / `today` / `days` / `weeks` / `currentWeekKey` / `countdown` /

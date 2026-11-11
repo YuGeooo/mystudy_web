@@ -124,6 +124,7 @@ npm ci                   # 按 package-lock.json 精确安装（只有 marked）
 | 命令 | 作用 |
 |---|---|
 | `npm run dev` | 预检 → 同步 JSON → 起服务（等价 `./dev.sh`） |
+| `npm test` | 全量：预检 → 语法 → 导出等价 → SQL 32 → 写接口 122 → CLI 33 → 只读 20 |
 | `npm run site` | 静态构建到 `web/.build/`（离线预览与回滚兜底） |
 
 写接口测试全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的
@@ -199,6 +200,7 @@ Ctrl+C && ./dev.sh     # 自动同步 + 渲染 171 个页面到内存 + 起服�
 | 备份 | 写库前自动快照 · `GET /api/backups` 列快照 · `POST /api/backups` 手动打一份 |
 | 导出 | `POST /api/export`（Node 版导出器，服务器不需要 Python） |
 | 只读补充 | `/api/papers` · `/api/questions`（含题干全文检索）· `/api/sessions` · `/api/attempts` · `/api/attempts/:id` · `/api/redo` |
+| 页面数据全集 | `/api/study` —— 与页面同源：渲染页表时算好的 `buildData()` 原样返回，`?section=` 取一节 |
 | 只读 SQL | `GET/POST /api/sql`——只读执行器搬到 HTTPS 后面，`format=csv` 直接导出；**需 token**，子进程隔离 + 20s 超时 |
 | 开关 | `write.enabled=true` + `MEM_WRITE_TOKEN`（≥16 字符）+ 连接可写，缺一不可 |
 | 线上 | 已开启（`deploy/config.server.json`，token 在 `/www/api/mem-api.env`） |
@@ -207,6 +209,7 @@ Ctrl+C && ./dev.sh     # 自动同步 + 渲染 171 个页面到内存 + 起服�
 验证（不碰正式库）：
 
 ```bash
+node server/test-write-api.mjs    # 122 项：鉴权/创建/校验/事务性/订正/销账/场次订正/单题增删/题库读写/备份/导出/只读 SQL/页面数据全集/正式库保护
 node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段值与键顺序逐项比对
 ```
 

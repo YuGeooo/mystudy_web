@@ -36,6 +36,7 @@ token 从环境变量 `MEM_WRITE_TOKEN` 读取（≥16 字符），不写进配�
 | GET | `/api/health` | 含 `readOnly` / `writeEnabled` / `database` / `config` |
 | GET | `/api/meta` | 覆盖、判定、计时、答案状态 |
 | GET | `/api/days` | 日历 / 热力图 / 连续天数（`commits` 恒空） |
+| GET | `/api/study` | **页面数据的全集**：渲染页表时算好的那份 `buildData()`，原样返回。`?section=` 只取一节 |
 | GET | `/api/papers` | 卷列表 |
 | GET | `/api/papers/:slug` | 单卷含题号清单 |
 | GET | `/api/questions` | 支持 `paper` / `topic` / `q`（题干全文检索）/ `limit` / `offset` / `include=content` |
@@ -50,11 +51,14 @@ token 从环境变量 `MEM_WRITE_TOKEN` 读取（≥16 字符），不写进配�
 
 只读接口不需要 token，也不需要写模式——**`/api/sql` 是唯一例外**。
 
+`/api/meta` 与 `/api/study` 容易混：
 
 | | 数据来源 | 口径 | 用途 |
 |---|---|---|---|
 | `/api/meta` | 直接查库（`buildMeta`） | 库行数、判定三态、计时分布 | 数据自检、脚本核对 |
+| `/api/study` | **页表渲染时算好的那份 `buildData()`** | 页面口径：学习天数、连续天数、卷掌握度、知识点树、周聚合 | 要与页面显示一致时用这个 |
 
+`/api/study` 不重新查库、不重新聚合，直接把 `pages.mjs` 里存着的那份对象返回，
 所以它和页面必然同源：写完库 → 重建页表 → 两者的数字一起变，不存在两个口径。
 加 `?section=stats|volumes|knowledge|days|weeks|countdown|meta|today|warnings` 只取一节（整份约 96 KB）。
 

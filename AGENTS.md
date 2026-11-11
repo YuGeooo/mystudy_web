@@ -106,6 +106,7 @@ mem schema                  # 字段名先查，不要猜
 
 ```bash
 npm run dev        # 预检 → sync.sh 导出 JSON → 起 8137（只读）
+npm test           # 预检 → 语法 → 导出等价 → SQL 32 → 写接口 122 → CLI 33 → 只读 20
 ```
 
 - `npm test` 全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的 sha256 + mtime，一致才算绿。
