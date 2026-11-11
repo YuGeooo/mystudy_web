@@ -17,10 +17,9 @@ import config from './config.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ASSETS = path.join(ROOT, 'web', 'assets');
 
-// 契约路径走配置：测试进程（8138）读的是 test-index.json，不会把正式数据渲染出来。
+// 页面渲染只依赖两样东西：库（数据）与 volumes.json（卷顺序与知识树配置）。
+// index.json / content.json 仍然是导出物，但不再是渲染输入。
 const CONTRACTS = {
-  index: config.exportIndexPath,
-  content: config.exportContentPath,
   volumes: config.volumesPath,
 };
 
@@ -76,13 +75,15 @@ function loadAsset(name) {
   }
 }
 
-// 契约文件的指纹（大小 + mtime）。写接口会主动重建页表，但直接改库再重导 JSON
+// 数据指纹：库文件 + WAL + volumes.json。写接口会主动重建页表，但直接改库
 // 这种绕开写接口的路径也得让页面跟上，所以每次请求顺手比对一下。
+// 页面不再读导出 JSON，所以这里盯库本身：WAL 模式下新数据先落 -wal，
+// 只看 .db 的 mtime 会漏掉未 checkpoint 的写入。
 let contractsStamp = '';
 
 function contractsFingerprint() {
   const parts = [];
-  for (const file of [CONTRACTS.index, CONTRACTS.content, CONTRACTS.volumes]) {
+  for (const file of [config.dbPath, `${config.dbPath}-wal`, CONTRACTS.volumes]) {
     try {
       const st = fs.statSync(file);
       parts.push(`${st.size}:${Math.round(st.mtimeMs)}`);
@@ -162,18 +163,27 @@ function send(req, res, status_, body, type, etag, cacheControl = 'no-cache') {
 }
 
 /**
+ * 请求入口统一调用：跨天、或库文件变了，就重建页表。
+ * 页面请求和 `/api/study` 都要走这一步——否则绕过接口改了库，
+ * 只调接口的客户端会一直拿到旧数据，而页面已经刷新了。
+ */
+export function ensureFresh(today) {
+  if (state.builtAt && state.today && today && state.today !== today) {
+    rebuildSafe('date-roll');
+  } else if (state.builtAt && contractsFingerprint() !== contractsStamp) {
+    // 绕开写接口改了库（本机 scripts/sync.sh、运维手工改库）时，
+    // 下一次请求就把页面补齐，不用重启进程。
+    rebuildSafe('contracts-changed');
+  }
+}
+
+/**
  * 处理 /study/* 的请求。
  * @param {string} today 调用方算好的本地日期，用于跨天失效
  */
 export function serve(req, res, pathname, today) {
   // 页面里的「今天」「倒计时天数」是按渲染那一刻算的，跨天必须重算。
-  if (state.builtAt && state.today && today && state.today !== today) {
-    rebuildSafe('date-roll');
-  } else if (state.builtAt && contractsFingerprint() !== contractsStamp) {
-    // 绕开写接口改了库、重新导了 JSON（本机 scripts/sync.sh、运维手工替换）时，
-    // 下一次请求就把页面补齐，不用重启进程。
-    rebuildSafe('contracts-changed');
-  }
+  ensureFresh(today);
 
   let rel;
   try {

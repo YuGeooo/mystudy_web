@@ -300,6 +300,8 @@ export async function handle(req, res) {
     // 页面数据的全集：直接返回渲染页表时算好的那份 buildData()。
     // 加 `?section=` 只取一节（stats / volumes / knowledge / days / weeks / countdown…）。
     if (a === 'study') {
+      // 与页面请求走同一个新鲜度检查：绕过接口改了库，接口也不能给旧数据
+      pages.ensureFresh(todayLocal(config.timeZone));
       const data = pages.getSiteData();
       if (!data) throw new ApiError(503, 'site_unavailable', '页表还没建好，稍后重试');
       const section = q(url, 'section');

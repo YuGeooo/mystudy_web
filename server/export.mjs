@@ -164,7 +164,7 @@ function buildAttempts(sessionsById, questionsById) {
   return out;
 }
 
-function buildIndex(volumes) {
+export function buildIndex(volumes) {
   const { nodes } = knowledgeNodes(volumes);
   const { questions, byId: questionsById } = buildQuestions(nodes);
   const { sessions, byId: sessionsById } = buildSessions();
@@ -210,7 +210,7 @@ function buildIndex(volumes) {
   };
 }
 
-function buildContent(dbName) {
+export function buildContent(dbName) {
   const sessions = {};
   for (const r of all('SELECT * FROM sessions ORDER BY rowid')) {
     const { baseline } = unenvelope(r.note);

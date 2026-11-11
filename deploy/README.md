@@ -23,7 +23,7 @@
   .rollback/                每次部署前的代码备份，保留 10 份
   data -> /www/data         软链
 /www/builder                静态构建器与部署脚本
-  server/build-site.mjs     三份 JSON → 静态站点（现在只用于手动兜底构建）
+  server/build-site.mjs     SQLite → 静态站点（现在只用于手动兜底构建）
   web/render -> /www/app/scripts/build/lib    渲染器软链，代码只有一份
   build-release.sh          构建到指定目录
   deploy.sh                 部署 v2（git pull + 构建 + 软链切换）

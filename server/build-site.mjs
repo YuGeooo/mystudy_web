@@ -1,10 +1,12 @@
-// 站点渲染：三份 JSON 契约 → 页面。
+// 站点渲染：SQLite → 页面。
 //
 // 两种出口，共用同一套解析与聚合：
 //   buildPages() → 内存 Map，运行时按请求出页面用（服务端常驻，写完立刻生效）
 //   buildSite()  → 写盘，静态构建用（release 兜底、本地预览、离线查看）
 //
-// 与站点仓库 index.mjs 的差别只有两点：数据源从 git 换成 content.json，commits 恒为空。
+// 数据直接从库构造（server/export.mjs 的 buildIndex / buildContent），
+// index.json / content.json 仍是导出物，但只是对外契约与备份，不再是渲染输入。
+// 与站点仓库 index.mjs 的差别只有两点：数据源从 git 换成库，commits 恒为空。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,6 +14,8 @@ import { isSessionPath, parseSession } from '../web/render/parse.mjs';
 import { buildData } from '../web/render/aggregate.mjs';
 import { buildPaper } from '../web/render/paper.mjs';
 import { renderSite } from '../web/render/render.mjs';
+import { buildIndex, buildContent } from './export.mjs';
+import appConfig from './config.mjs';
 import { todayLocal } from './dates.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -73,23 +77,23 @@ function buildPapers(content, volumesJson) {
 }
 
 /**
- * 读契约、解析场次、聚合出渲染所需的全部输入。
+ * 读配置、从库构造数据、解析场次、聚合出渲染所需的全部输入。
  * 每次调用都是全量重算——库小（几十场、几百条作答），实测远快于一次网络往返。
  *
- * paths 可覆盖默认位置：测试进程要读 test-index.json / test-content.json，
- * 不能把正式契约渲染出来。
+ * paths 只覆盖 siteConfig 与 volumes；数据一律来自配置指向的库
+ * （测试进程 MEM_CONFIG=config.test.json → data/test.db，天然与正式数据隔离）。
  */
 export function prepare(paths = {}) {
   const siteConfigFile = paths.siteConfig || path.join(WEB, 'site.config.json');
   const volumesFile = paths.volumes || path.join(DATA, 'volumes.json');
 
-  const indexFile = paths.index || path.join(DATA, 'index.json');
-  const contentFile = paths.content || path.join(DATA, 'content.json');
-
   const config = readJson(siteConfigFile);
   const volumes = readJson(volumesFile);
-  const jsonIndex = readJson(indexFile);
-  const content = readJson(contentFile);
+  // 页面数据直接从库构造，不再读 index.json / content.json 的导出快照。
+  // 两份文件仍然导出（对外契约、备份、离线预览），但不再是渲染输入：
+  // 导出与渲染之间不再有时间窗，绕过接口改了库也不会出现「页面旧、API 新」。
+  const jsonIndex = buildIndex(volumes);
+  const content = buildContent(path.basename(appConfig.dbPath));
   const timeZone = config.site?.timezone || 'Asia/Shanghai';
 
   // 卷清单单一数据源：与站点 index.mjs 的派生规则逐字一致。

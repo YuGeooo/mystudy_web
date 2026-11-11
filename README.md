@@ -61,7 +61,7 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
 | 表数 | 7~9 张 + 运维层 | 4 张：`papers` / `questions` / `sessions` / `attempts` |
 | 一致性 | hash 链 / snapshot / 三层校验 / 发布闸门 | 事务 + 外键 + CHECK + 唯一约束 + 导出前对账 |
 | 录入 | 写 md → git commit → 重建 | 直接写库 |
-| 站点 | 读导出的 `index.json` | 不变，仍读导出的 `index.json` |
+| 站点 | 读导出的 `index.json` | 直接读库（`buildIndex` / `buildContent`），JSON 降级为导出物 |
 | 文档量 | 7 份约 1400 行 | 1 份数据模型文档 |
 
 ## 口径决定（已定）
@@ -92,8 +92,10 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
   写接口的响应返回时页面已经是新的，没有等待窗口、没有定时任务。
 - **代价**：页面可用性绑在这个进程上（以前 Node 挂了静态文件还能看）。
   缓解：`Restart=on-failure`；重建失败保留上一版页表，宁可发旧页面也不白屏。
-- **数据链路**：`mem.db`（真源） → `export.mjs` → 三份 JSON → 渲染器 → 内存页表。
-  JSON 契约仍然保留：它是渲染的输入，也是外部工具与离线查看的出口。
+- **数据链路**：`mem.db`（唯一真源） → `buildIndex` / `buildContent` 从库直接构造 → 渲染器 → 内存页表。
+  `index.json` / `content.json` 仍然导出（对外契约、备份、离线预览），但**不再是渲染输入**——
+  页面与 `/api/*` 读的是同一时刻的同一份库，不存在「页面旧、接口新」的时间窗，
+  绕过接口改了库也会在下一次请求时被指纹比对发现并自动重建。
 - **静态构建仍可用**：`node server/build-site.mjs` 写盘到 `web/.build/`（服务器上由
   `/www/builder/build-release.sh` 产出 `/www/releases/<TS>`），仅作回滚兜底，线上不再读取。
 - **Python 只做离线工具**：`scripts/*.py` 仅在本机跑迁移 / 导出 / 核对，不进服务器运行时；
@@ -174,11 +176,13 @@ CI 上没有这份数据就跑不了写接口测试。真要接，得先造一�
 
 跨天也不用管：页面里的「今天」「倒计时天数」按请求时的日期判断，日期一变自动重渲染。
 
-只有一种情况要手动介入——你直接改了库（绕过写接口）：
+只有一种情况要手动介入——你直接改了库（绕过写接口）。**页面和 `/api/study` 会自动跟上**：
+每次请求都会比对库文件（含 WAL）与 `volumes.json` 的指纹，变了就重建（`reason: contracts-changed`），
+不需要重启也不需要先导出。`sync.sh` 现在只负责刷新导出契约（备份与对外用途）：
 
 ```bash
 # 本机
-./scripts/sync.sh          # 导出 JSON；进程下次请求会发现契约变了并重建页表
+./scripts/sync.sh          # 重导 JSON（对外契约与备份）；页面直接读库，不依赖它
 # 线上
 mem export
 ```
@@ -192,8 +196,8 @@ mem export
 Ctrl+C && ./dev.sh     # 自动同步 + 渲染 196 个页面到内存 + 起服务
 ```
 
-`./dev.sh` 启动前已默认执行同步。就算忘了重启，`sync.sh` 写完 JSON 后进程会在下一次
-页面请求时自己发现文件变了并重建（`reason: contracts-changed`）。
+`./dev.sh` 启动前已默认执行同步。就算忘了重启，改了库之后进程会在下一次
+请求时自己发现库变了并重建（`reason: contracts-changed`）。
 闭环验证用 `node scripts/verify-loopback.mjs`（需先停服务，会临时改一条判定并完整恢复）。
 
 ## 写接口（P5）
