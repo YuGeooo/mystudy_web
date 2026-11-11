@@ -57,7 +57,7 @@
 | PASS | process_md 逐字覆盖场次批改全文 | 40/40 份场次文档正文（去 front matter）逐字可在 process_md 中检出 |
 | N/A | 站点 meta.activity 热力图 | 本次迁移不含站点改动（设计 §5 / README 待确认项） |
 | N/A | 线上站点未改动 | 未对站点目录做任何写操作 |
-| INFO | 数据库文件 | /Users/geyuqi/WorkBuddy/mem_new/data/mem.db（3883008 字节，WAL 模式） |
+| INFO | 数据库文件 | /Users/geyuqi/WorkBuddy/mem_web/data/mem.db（3883008 字节，WAL 模式） |
 
 ## 说明
 

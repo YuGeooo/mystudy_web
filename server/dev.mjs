@@ -39,7 +39,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(config.port, config.host, () => {
   const mode = config.writeEnabled ? '读写（写接口已启用，需 Bearer token）' : '只读';
-  console.log(`mem_new api  →  http://${config.host}:${config.port}`);
+  console.log(`mem_web api  →  http://${config.host}:${config.port}`);
   console.log(`配置 ${config.configName} · 数据库 ${config.database} · ${mode}`);
   console.log(`SQLite ${get('SELECT sqlite_version() v').v}`);
   console.log(

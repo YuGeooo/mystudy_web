@@ -106,7 +106,7 @@ export function prepare(paths = {}) {
     generatedAt: new Date().toISOString(),
     memCommit: 'localdb',
     memCommitShort: 'localdb',
-    source: 'mem_new/data/mem.db（content.json / index.json / volumes.json）',
+    source: 'mem_web/data/mem.db（content.json / index.json / volumes.json）',
     counts: {
       commits: 0,
       trackedFiles: sessionFiles.length + Object.keys(content.papers).length,
