@@ -22,6 +22,12 @@ echo '=== 1/5 语法检查 ==='
 
 echo
 echo '=== 2/5 导出等价性（Node 导出器 vs Python 导出器，逐字段 + 键顺序）==='
+# compare-export 读 data/test.db；它可能刚被清理过，这里按需从正式库复制一份。
+if [ ! -e data/test.db ]; then
+  sqlite3 data/mem.db ".backup 'data/test.db'"
+  rm -f data/test.db-wal data/test.db-shm
+  echo '  已从 data/mem.db 生成测试库'
+fi
 if ! command -v python3 >/dev/null 2>&1; then
   echo '  跳过：本机没有 python3。这一步用于保证两套导出器输出完全一致，' >&2
   echo '        只影响迁移期的交叉校验，不影响服务运行。' >&2
@@ -47,12 +53,30 @@ node server/test-cli.mjs
 
 echo
 echo '=== 5/5 只读链路回归 ==='
+# 本机 8137 不再常驻（省一个后台进程），没起就临时起一个，跑完立刻停。
+SMOKE_PID=""
+cleanup_smoke() {
+  if [ -n "$SMOKE_PID" ] && kill -0 "$SMOKE_PID" 2>/dev/null; then
+    kill "$SMOKE_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_smoke EXIT
+
 if [ "${SKIP_SMOKE:-0}" = "1" ]; then
   echo '  跳过（SKIP_SMOKE=1）'
-elif curl -fsS --max-time 1 http://127.0.0.1:8137/api/health >/dev/null 2>&1; then
-  node server/smoke-test.mjs
 else
-  echo '  跳过：8137 没有服务在跑。先 ./dev.sh 起服务，这一步才跑得起来。'
+  if ! curl -fsS --max-time 1 http://127.0.0.1:8137/api/health >/dev/null 2>&1; then
+    echo '  8137 没有服务，临时启动（跑完自动停）'
+    SKIP_SYNC=$([ -s data/index.json ] && echo 1 || echo 0) ./dev.sh >/tmp/mem-smoke-server.log 2>&1 &
+    SMOKE_PID=$!
+    for _ in $(seq 1 60); do
+      curl -fsS --max-time 1 http://127.0.0.1:8137/api/health >/dev/null 2>&1 && break
+      sleep 0.2
+    done
+  fi
+  node server/smoke-test.mjs
+  cleanup_smoke
+  SMOKE_PID=""
 fi
 
 echo

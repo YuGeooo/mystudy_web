@@ -2,8 +2,6 @@
 //
 // 目的：证明 server/export.mjs 可以替代 scripts/export_index.py 与 export_content.py。
 // 两边只有两处允许不同：meta.generatedAt、meta.generator（以及 content 的 generatedAt/source）。
-//
-// 用法：node scripts/compare-export.mjs [db路径]（默认 data/test.db）
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,8 +9,11 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
+// 用法：node scripts/compare-export.mjs [db路径]
+// 默认优先 data/test.db；它只是测试产物、可能被清理，缺失时回落到 data/mem.db（同样只读）。
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const db = process.argv[2] || 'data/test.db';
+const explicit = process.argv[2];
+const db = explicit || (fs.existsSync(path.resolve(ROOT, 'data/test.db')) ? 'data/test.db' : 'data/mem.db');
 const dbPath = path.resolve(ROOT, db);
 if (!fs.existsSync(dbPath)) {
   console.error(`数据库不存在：${dbPath}`);

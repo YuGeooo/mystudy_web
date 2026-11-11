@@ -122,12 +122,16 @@ npm ci                   # 按 package-lock.json 精确安装（只有 marked）
 | 命令 | 作用 |
 |---|---|
 | `npm run dev` | 预检 → 同步 JSON → 起服务（等价 `./dev.sh`） |
-| `npm test` | 全量：预检 → 语法 → 导出等价 → 写接口 108 项 → 只读 19 项 |
-| `npm run check` | 只做语法检查（29 个 `.mjs` + 14 个 `.sh`） |
+| `npm test` | 全量：预检 → 语法 → 导出等价 → 写接口 108 → CLI 21 → 只读 19 |
+| `npm run check` | 只做语法检查（32 个 `.mjs` + 15 个 `.sh`，含 `bin/mem`） |
 | `npm run site` | 静态构建到 `web/.build/`（离线预览与回滚兜底） |
 
 写接口测试全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的
-sha256 + mtime，一致才通过。`SKIP_SMOKE=1 npm test` 可跳过需要 8137 在跑的只读回归。
+sha256 + mtime，一致才通过。只读回归**不依赖常驻服务**：`test.sh` 发现 8137 没起会临时起一个，
+跑完自动停（`SKIP_SMOKE=1` 可整段跳过）。
+
+`data/test.db` 与 `data/test-backups/` 都是测试产物，可随时删（约 24 MB），下次跑测试会重建。
+本机 `data/mem.db` 是测试夹具的来源，不能删。
 
 ### 提交钩子
 
@@ -253,7 +257,7 @@ Agent 的操作约定与错误码表在 [doc/cli.md §7](doc/cli.md)。
 
 ```bash
 ./scripts/backup.sh                                  # 手动备一份
-mem --local backups                                  # 看有哪些快照（线上用 mem backups）
+mem backups                                          # 看线上有哪些快照
 ./scripts/restore.sh backups/20261111-193012-post-questions
 ./scripts/restore.sh <目录> --volumes                # 连知识树一起退回
 ```
