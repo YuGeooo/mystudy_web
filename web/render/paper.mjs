@@ -133,9 +133,40 @@ function splitSections(body) {
   return { body: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim(), dropped };
 }
 
+/**
+ * 卷面结构归一：入库原文的题号写法不统一——大多数卷是 **1.**（约定），
+ * 有的卷是行首裸的 `1. `，后者会被 Markdown 解析成有序列表，整份卷挤成
+ * 一个紧凑列表（题目之间没有间距，卷内题号还会被列表标记吃掉）。统一成约定形状：
+ *   1. 锚点独立成行：句中锚点前后补空行（削弱题的锚点写在题干中间）
+ *   2. 行首裸题号转成 **N.**，前面补空行，与前后的题目拉开段落间距
+ * 已是 **N.** 的行原样保留；代码块内不处理。
+ */
+function normalizeLayout(body) {
+  return body
+    .split(/(```[\s\S]*?```)/)
+    .map((part) => {
+      if (part.startsWith('```')) return part;
+      const lines = part
+        .replace(/[ \t]*<a id="([^"]+)"><\/a>/g, '\n\n<a id="$1"></a>\n\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .split('\n');
+      const out = [];
+      for (const line of lines) {
+        const bare = /^(\d{1,3})\.\s+/.exec(line);
+        if (bare && !line.startsWith('**')) {
+          if (out.length && out[out.length - 1].trim()) out.push('');
+          out.push(`**${bare[1]}.** ${line.slice(bare[0].length)}`);
+        } else {
+          out.push(line);
+        }
+      }
+      return out.join('\n').replace(/\n{3,}/g, '\n\n');
+    })
+    .join('');
+}
+
 /** 章节与题目锚点，按正文出现顺序。 */
-function scanStructure(body) {
-  const sections = [];
+function scanStructure(body) {  const sections = [];
   const questions = [];
   let current = null;
   for (const line of body.split('\n')) {
@@ -168,8 +199,9 @@ function scanStructure(body) {
 export function buildPaper({ path, md }) {
   const head = splitHead(md);
   const cut = splitSections(head.body);
-  const { sections, questions } = scanStructure(cut.body);
-  const math = convertMath(cut.body);
+  const body = normalizeLayout(cut.body);
+  const { sections, questions } = scanStructure(body);
+  const math = convertMath(body);
 
   // 章节用 s1… 的 id，与 scanStructure 的顺序一致；marked 输出顺序与正文相同，所以顺序编号即可。
   let h2 = 0;
