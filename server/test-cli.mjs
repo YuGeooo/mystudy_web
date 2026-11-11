@@ -338,6 +338,52 @@ try {
     assert.equal(r.code, 2);
     assert.match(r.text, /未知命令/);
   });
+
+  // ---- SQL 直连：走 --local 读正式库的只读连接，不碰测试库也不打线上 ----
+  await check('sql --local --json 返回列与行', async () => {
+    const r = await mem(['sql', '--local', '--json', 'select count(*) as n from attempts']);
+    assert.equal(r.code, 0, r.text);
+    const d = JSON.parse(r.stdout);
+    assert.equal(d.ok, true);
+    assert.deepEqual(d.columns, ['n']);
+    assert.ok(d.rows[0].n > 0);
+    assert.ok(d.mirror.ageHours >= 0);
+  });
+
+  await check('sql --local --csv 输出表头与数据行', async () => {
+    const r = await mem(['sql', '--local', '--csv', 'select 1 as a, 2 as b']);
+    assert.equal(r.code, 0, r.text);
+    assert.equal(r.stdout.trim().split('\n')[0], 'a,b');
+    assert.equal(r.stdout.trim().split('\n')[1], '1,2');
+  });
+
+  await check('sql 写操作退出码 2 且说明去向', async () => {
+    const r = await mem(['sql', '--local', 'delete from attempts']);
+    assert.equal(r.code, 2);
+    assert.match(r.text, /只读|mem a set/);
+  });
+
+  await check('sql --dry-run 只打印请求', async () => {
+    const r = await mem(['sql', '--local', '--dry-run', 'select 1']);
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /"sql":"select 1"/);
+    assert.ok(!r.stdout.includes('"rows"'));
+  });
+
+  await check('schema --local 列出字段', async () => {
+    const r = await mem(['schema', '--local', 'attempts']);
+    assert.equal(r.code, 0, r.text);
+    assert.match(r.stdout, /attempts/);
+    assert.match(r.stdout, /question_id/);
+    assert.match(r.stdout, /redo_status/);
+  });
+
+  await check('sql 表名写错时提示语法错误（退出码 2）', async () => {
+    const r = await mem(['sql', '--local', '--json', 'select * from nope']);
+    assert.equal(r.code, 2);
+    const d = JSON.parse(r.stdout);
+    assert.equal(d.code, 'bad_sql');
+  });
 } finally {
   if (!child.killed) child.kill('SIGTERM');
   await new Promise((resolve) => {

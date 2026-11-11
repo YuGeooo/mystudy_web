@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 统一测试入口。依次跑：预检 → 语法 → 导出等价 → 写接口 → 只读链路。
+# 统一测试入口。依次跑：预检 → 语法 → 导出等价 → SQL 执行器 → 写接口 → CLI → 只读链路。
 #
 # 设计原则：任何一步失败立刻停，不让后面的绿色输出掩盖前面的红。
 # 所有写操作都发生在 data/test.db 上，正式库 data/mem.db 的 sha256 会被前后比对。
@@ -13,15 +13,15 @@ cd "$(dirname "$0")/.."
 # 测试用的写 token：只在 8138 的临时进程里有效，不是线上那把。
 export MEM_WRITE_TOKEN="${MEM_WRITE_TOKEN:-testtoken-testtoken-1234}"
 
-echo '=== 0/5 环境预检 ==='
+echo '=== 0/6 环境预检 ==='
 ./scripts/preflight.sh
 
 echo
-echo '=== 1/5 语法检查 ==='
+echo '=== 1/6 语法检查 ==='
 ./scripts/check.sh
 
 echo
-echo '=== 2/5 导出等价性（Node 导出器 vs Python 导出器，逐字段 + 键顺序）==='
+echo '=== 2/6 导出等价性（Node 导出器 vs Python 导出器，逐字段 + 键顺序）==='
 # compare-export 读 data/test.db；它可能刚被清理过，这里按需从正式库复制一份。
 if [ ! -e data/test.db ]; then
   sqlite3 data/mem.db ".backup 'data/test.db'"
@@ -36,7 +36,11 @@ else
 fi
 
 echo
-echo '=== 3/5 写接口自测（在 data/test.db 上跑，正式库不动）==='
+echo '=== 3/6 SQL 执行器（只读闸门 + 文档里的查询能不能跑）==='
+node server/test-sql.mjs
+
+echo
+echo '=== 4/6 写接口自测（在 data/test.db 上跑，正式库不动）==='
 if curl -fsS --max-time 1 http://127.0.0.1:8138/api/health >/dev/null 2>&1; then
   echo '  8138 已被占用，测试需要自己起进程。先停掉它：kill $(lsof -tiTCP:8138 -sTCP:LISTEN)' >&2
   exit 1
@@ -44,7 +48,7 @@ fi
 node server/test-write-api.mjs
 
 echo
-echo '=== 4/5 CLI 验收（日常命令的退出码 / 输出 / --json / --dry-run）==='
+echo '=== 5/6 CLI 验收（日常命令的退出码 / 输出 / --json / --dry-run）==='
 if curl -fsS --max-time 1 http://127.0.0.1:8138/api/health >/dev/null 2>&1; then
   echo '  8138 已被占用，测试需要自己起进程。先停掉它：kill $(lsof -tiTCP:8138 -sTCP:LISTEN)' >&2
   exit 1
@@ -52,7 +56,7 @@ fi
 node server/test-cli.mjs
 
 echo
-echo '=== 5/5 只读链路回归 ==='
+echo '=== 6/6 只读链路回归 ==='
 # 本机 8137 不再常驻（省一个后台进程），没起就临时起一个，跑完立刻停。
 SMOKE_PID=""
 cleanup_smoke() {

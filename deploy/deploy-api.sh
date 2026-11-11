@@ -33,6 +33,7 @@ fi
 # 测试文件留在本机：服务器上没有测试库，传上去只会占地方。
 tar czf "$PKG" \
   --exclude='test-write-api.mjs' --exclude='smoke-test.mjs' \
+  --exclude='test-cli.mjs' --exclude='test-sql.mjs' \
   --exclude='node_modules/.bin' \
   server/*.mjs web/render/*.mjs web/assets/app.css node_modules
 echo "[api] 打包 $(tar tzf "$PKG" | grep -cv '/$' || true) 个文件（含依赖 $(du -sh node_modules | cut -f1)）"

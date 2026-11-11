@@ -10,18 +10,31 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const DEFAULT_BASE = 'https://geyuqi.me';
 const LOCAL_BASE = 'http://127.0.0.1:8137';
 const TEST_BASE = 'http://127.0.0.1:8138';
 
+// SQL 直连的默认落点：线上真源。SQLite 没有网络协议，所以走 SSH 到那台机器上执行。
+const DEFAULT_SSH = 'root@121.89.87.48';
+const REMOTE_DB = '/www/data/mem.db';
+const REMOTE_NODE = '/opt/node22/bin/node';
+const REMOTE_SQLRUN = '/www/api/server/sqlrun.mjs';
+const LOCAL_DB = 'data/mem.db';
+
 // 只要出现就必须带值的选项；其余 --xxx 视为拼错，直接报用法。
 const VALUED = new Set([
   'base', 'token', 'paper', 'topic', 'search', 'limit', 'offset',
   'from', 'to', 'question', 'redo', 'date', 'status', 'file',
+  'db', 'ssh', 'max-rows', 'sql',
 ]);
 const BOOLEAN = new Set([
   'json', 'help', 'local', 'test', 'content', 'process', 'meta', 'dry-run', 'no-content',
+  'csv', 'quiet',
 ]);
 
 class UsageError extends Error {}
@@ -242,6 +255,239 @@ async function request(ctx, method, pathname, { body, auth = false } = {}) {
   }
   if (!res.ok) throw new HttpError(res.status, data);
   return data;
+}
+
+// ---------------------------------------------------------------- SQL 直连
+//
+// 预设命令覆盖不了的聚合/筛选，直接写 SQL 更快：按知识点算正确率、按周做
+// 重做转化、JOIN 三张表看某题的历次判定。SQLite 没有网络协议，所以「直连」
+// = SSH 到数据所在的机器上执行（服务器真源），或者读本机镜像。
+// 只读有硬闸：连接 readOnly + 单条语句 + 只读关键字，见 server/sqlrun.mjs。
+
+class SqlError extends Error {
+  constructor(message, code) {
+    super(message);
+    this.code = code || 'sql_error';
+  }
+}
+
+function runProcess(cmd, args, input, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGKILL');
+      reject(new NetworkError(`执行超时（${timeoutMs / 1000}s）`));
+    }, timeoutMs);
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new NetworkError(`无法执行 ${cmd}：${err.message}`));
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+    child.stdin.on('error', () => {});   // 进程提前退出时写 stdin 会 EPIPE
+    child.stdin.end(input);
+  });
+}
+
+// ssh 每次都会打一段 post-quantum 警告，用户看的是查询结果，不是这个。
+function cleanStderr(text) {
+  return String(text || '')
+    .split('\n')
+    .filter((l) => l.trim() && !/post-quantum|store now|openssh\.com\/pq|^\*\*/.test(l))
+    .join('\n')
+    .trim();
+}
+
+function parseRunner(r, label) {
+  const line = r.stdout.trim().split('\n').filter((l) => l.trim()).pop() || '';
+  let data = null;
+  try {
+    data = JSON.parse(line);
+  } catch { /* 下面统一报错 */ }
+
+  if (!data) {
+    const err = cleanStderr(r.stderr);
+    if (r.code === 255) {
+      throw new NetworkError(
+        `连不上 ${label}（SSH 免密没配好？或用 --ssh user@host 指定）` + (err ? `\n${err}` : '')
+      );
+    }
+    if (r.code === 124) throw new NetworkError(`${label} 执行超时（服务器端 timeout 20s 已终止）`);
+    throw new NetworkError(`${label} 没有返回结果（exit ${r.code}）` + (err ? `\n${err}` : ''));
+  }
+  if (!data.ok) throw new SqlError(data.error || 'SQL 执行失败', data.code);
+  return data;
+}
+
+async function executeSql(sql, opts) {
+  const payload = JSON.stringify({
+    sql,
+    maxRows: opts['max-rows'] ? Number(opts['max-rows']) : undefined,
+  });
+
+  if (opts['dry-run']) {
+    out(`# ${opts.db || opts.local ? `本机 ${opts.db || LOCAL_DB}` : `${opts.ssh || DEFAULT_SSH}:${REMOTE_DB}`}`);
+    out(payload);
+    return null;
+  }
+
+  if (opts.db || opts.local) {
+    const db = opts.db || LOCAL_DB;
+    const abs = path.isAbsolute(db) ? db : path.join(ROOT, db);
+    if (!fs.existsSync(abs)) {
+      throw new UsageError(`${db} 不存在；先 mem pull 拉一份线上镜像，或用 mem sql 直接查线上`);
+    }
+    const r = await runProcess(
+      process.execPath,
+      ['--no-warnings', path.join(ROOT, 'server/sqlrun.mjs'), '--db', abs],
+      payload
+    );
+    const data = parseRunner(r, `本机 ${db}`);
+    // 本机这份是镜像，线上才是真源。查出来的是旧数据却说"线上没更新"，最容易误判。
+    data.mirror = {
+      ageHours: Math.round(((Date.now() - fs.statSync(abs).mtimeMs) / 3600000) * 10) / 10,
+    };
+    return data;
+  }
+
+  const host = opts.ssh || process.env.MEM_SSH || DEFAULT_SSH;
+  const db = process.env.MEM_REMOTE_DB || REMOTE_DB;
+  const remote = `timeout 20 ${REMOTE_NODE} --no-warnings ${REMOTE_SQLRUN} --db ${db}`;
+  // 复用 SSH 连接：首次 0.8s，之后同一条长连接上每次查询 ~30ms。
+  // 没有这层的话，连着查十条就是八秒，SQL 再灵活也没人愿意用。
+  const r = await runProcess(
+    'ssh',
+    [
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',
+      '-o', 'ControlMaster=auto',
+      '-o', 'ControlPath=/tmp/mem-ssh-%r@%h:%p',
+      '-o', 'ControlPersist=300',
+      host,
+      remote,
+    ],
+    payload,
+    40000
+  );
+  return parseRunner(r, `${host}:${db}`);
+}
+
+function printSql(data, opts) {
+  if (!data) return;                       // --dry-run 已经打印过了
+  if (opts.json) return printJson(data);
+
+  const { columns = [] } = data;
+  const rows = data.rows || [];
+  if (!columns.length) { out('（没有结果列）'); return; }
+
+  if (opts.csv) {
+    const esc = (v) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    out(columns.map(esc).join(','));
+    for (const r of rows) out(columns.map((c) => esc(r[c])).join(','));
+    return;
+  }
+
+  if (!rows.length) {
+    out(`（0 行 · ${data.ms}ms）`);
+    return;
+  }
+  const cell = (v) => (v === null || v === undefined
+    ? '—'
+    : cut(String(v).replace(/\s+/g, ' '), 48));
+  table(columns, rows.map((r) => columns.map((c) => cell(r[c]))));
+
+  const bits = [`${data.count} 行`, `${data.ms}ms`];
+  if (data.truncated) bits.push(`超过 ${data.limit} 行已截断，加 limit 或 --max-rows`);
+  out(`— ${bits.join(' · ')}  ${data.db}`);
+  if (data.mirror && data.mirror.ageHours >= 24) {
+    const days = Math.floor(data.mirror.ageHours / 24);
+    out(`  注意：这是本机镜像，${days >= 1 ? `${days} 天` : `${data.mirror.ageHours} 小时`}没更新了。mem pull 可同步，或者去掉 --local 直接查线上。`);
+  }
+}
+
+function readStdin() {
+  return new Promise((resolve) => {
+    let buf = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (d) => { buf += d; });
+    process.stdin.on('end', () => resolve(buf));
+  });
+}
+
+async function readSqlText(args, opts) {
+  if (opts.sql) return String(opts.sql);
+  if (opts.file) {
+    const p = opts.file === '-' ? null : (path.isAbsolute(opts.file) ? opts.file : path.join(process.cwd(), opts.file));
+    if (!p) return readStdin();
+    if (!fs.existsSync(p)) throw new UsageError(`找不到文件：${opts.file}`);
+    return fs.readFileSync(p, 'utf8');
+  }
+  if (args.length) return args.join(' ');
+  if (!process.stdin.isTTY) return readStdin();
+  throw new UsageError('用法：mem sql "select ..." / mem sql -f q.sql / echo "..." | mem sql');
+}
+
+async function runSqlCommand(args, opts) {
+  const sql = (await readSqlText(args, opts)).trim();
+  if (!sql) throw new UsageError('SQL 为空');
+  const data = await executeSql(sql, opts);
+  printSql(data, opts);
+}
+
+async function runSchema(args, opts) {
+  const name = args[0];
+  if (name && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new UsageError(`表名不合法：${name}`);
+  }
+  const filter = name ? ` AND m.name = '${name}'` : '';
+  const sql = `
+SELECT m.name AS 表, p.cid AS 序, p.name AS 列, p.type AS 类型,
+       CASE p."notnull" WHEN 1 THEN 'NOT NULL' ELSE '' END AS 约束,
+       p.dflt_value AS 默认, p.pk AS 主键
+FROM sqlite_master m
+JOIN pragma_table_info(m.name) p
+WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'${filter}
+ORDER BY m.name, p.cid`;
+  const data = await executeSql(sql.replace(/\s+/g, ' ').trim(), opts);
+  if (!data) return;
+  if (opts.json) return printJson(data);
+
+  if (!data.rows.length) { out(`（没有表${name ? `：${name}` : ''}）`); return; }
+  let current = null;
+  for (const r of data.rows) {
+    if (r['表'] !== current) {
+      if (current !== null) out('');
+      current = r['表'];
+      out(`▌ ${current}`);
+    }
+    const flags = [r['类型'] || '', r['约束'] || '', r['主键'] ? 'PK' : '', r['默认'] === null ? '' : `默认 ${r['默认']}`]
+      .filter(Boolean).join(' ');
+    out(`   ${pad(r['列'], 22)}${flags}`);
+  }
+}
+
+async function runPull() {
+  const r = await runProcess('bash', [path.join(ROOT, 'scripts/pull-data.sh')], '', 120000);
+  process.stdout.write(r.stdout);
+  if (r.code !== 0) {
+    throw new NetworkError(`拉取失败（exit ${r.code}）\n${cleanStderr(r.stderr)}`);
+  }
 }
 
 // ---------------------------------------------------------------- 只读命令
@@ -594,6 +840,18 @@ async function runWrite(ctx, group, action, rest, opts) {
 }
 
 async function runTop(ctx, cmd, rest, opts) {
+  if (cmd === 'sql') {
+    await runSqlCommand(rest, opts);
+    return true;
+  }
+  if (cmd === 'schema') {
+    await runSchema(rest, opts);
+    return true;
+  }
+  if (cmd === 'pull') {
+    await runPull();
+    return true;
+  }
   if (cmd === 'health') {
     const d = await request(ctx, 'GET', '/api/health');
     return opts.json ? printJson(d) : printHealth(d);
@@ -652,6 +910,14 @@ const HELP = `mem · 学习记录命令行
   mem redo                          待重做台账
   mem backups                       快照列表
 
+SQL 直连（只读，预设命令覆盖不了就用这个）
+  mem sql "select ..."              在线上真源执行（SSH，服务端 20s 超时）
+  mem sql -f q.sql                  从文件读；也可 echo "..." | mem sql
+  mem sql --local "..."             打本机镜像 data/mem.db（先 mem pull 更新）
+  mem sql --csv "..."               输出 CSV；--json 输出原始结果
+  mem schema [表]                   表与字段
+  mem pull                          拉线上库到 data/mem.db（先备份本机）
+
 写入（需要 token）
   mem s new <file|->                录入一场（JSON，单事务）
   mem s set <id> k=v ...            改场次头（date / durationMin / timingMode / note / fullText）
@@ -672,6 +938,9 @@ const HELP = `mem · 学习记录命令行
   --base <url>    指定服务，默认 https://geyuqi.me
   --token <t>     写 token，默认读 ~/.mem-api-token
   --dry-run       只打印请求，不发送
+  --db <path>     SQL 打指定库文件（本机路径）
+  --ssh <u@h>     SQL 走哪台机器，默认 root@121.89.87.48
+  --max-rows N    SQL 结果上限，默认 1000（硬顶 5000）
 
 示例
   mem q ls --paper 2024-exam --search 排列组合
@@ -679,6 +948,8 @@ const HELP = `mem · 学习记录命令行
   mem a set 2026-11-11-2024-exam-a12-2024-exam-q003 correct=true errorTag=审题
   mem a done 2026-11-11-2024-exam-a12-2024-exam-q003
   mem q new --file question.json --dry-run
+  mem sql "select topic, count(*) n, avg(correct) rate from attempts join questions q on q.id=attempts.question_id group by topic order by n desc"
+  mem sql "select substr(date,1,7) m, count(*) from sessions group by m" --csv
 `;
 
 // ---------------------------------------------------------------- 入口
@@ -741,6 +1012,15 @@ main()
       if (json) out(JSON.stringify({ ok: false, error: err.message }, null, 2));
       else out(`✗ ${err.message}`);
       process.exitCode = 1;
+      return;
+    }
+    if (err instanceof SqlError) {
+      if (json) out(JSON.stringify({ ok: false, error: err.message, code: err.code }, null, 2));
+      else {
+        out(`✗ ${err.message}`);
+        if (err.code === 'bad_sql') out('  表结构用 mem schema 看；字段名区分大小写。');
+      }
+      process.exitCode = 2;
       return;
     }
     if (err instanceof UsageError) {

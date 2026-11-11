@@ -9,7 +9,7 @@
 ## 1. 装一次
 
 ```bash
-cd ~/WorkBuddy/mem_new
+cd ~/WorkBuddy/mem_web
 chmod +x bin/mem
 ln -sf "$PWD/bin/mem" /opt/homebrew/bin/mem     # 换成任意 PATH 里可写的目录即可
 mem --help
@@ -33,6 +33,9 @@ mem --help
 
 本机 8137 **不常驻**（省一个后台进程）：要用 `--local` 先 `./dev.sh`，用完 Ctrl+C。
 线上那份随时可查，日常查询不需要本机服务。
+
+> `mem sql --local` 是例外：它不连 8137，而是直接读本机库文件 `data/mem.db`，
+> 所以不需要起服务，但也**不看**服务是否在跑。详见 [§11](#11-预设命令不够直接写-sql)。
 
 ## 3. token
 
@@ -350,6 +353,28 @@ mem backups                      # 看最近 20 份，含原因（POST-sessions 
 CLI 本身有验收脚本，跑在 `data/test.db` 上，正式库的 sha256 前后比对：
 
 ```bash
-node server/test-cli.mjs     # 21 项：查询 / token / dry-run / 建场 / 改判定 / 销账 / 删除 / 快照 / 导出
-npm test                     # 全量：预检 + 语法 + 导出等价 + 写接口 + CLI + 只读链路
+node server/test-cli.mjs     # 27 项：查询 / token / dry-run / 建场 / 改判定 / 销账 / 删除 / 快照 / 导出 / SQL
+node server/test-sql.mjs     # 27 项：只读闸门 + doc/sql.md 里每条 SQL 实际执行
+npm test                     # 全量：预检 + 语法 + 导出等价 + SQL + 写接口 + CLI + 只读链路
 ```
+
+## 11. 预设命令不够：直接写 SQL
+
+要按知识点算正确率、找做错过两次还标着重做的题、看某题历次判定，写一条 SQL 比等一个新命令快。
+
+```bash
+mem sql "select topic, count(*) n from attempts join questions q on q.id=attempts.question_id group by topic"
+mem sql -f q.sql                 # 长查询写文件
+mem sql --csv "..." > out.csv
+mem sql --json "..."             # {ok, columns, rows, count, truncated, ms}
+mem sql --local "..."            # 打本机镜像，最快（先 mem pull）
+mem schema [表]                  # 字段名不用猜
+```
+
+只读，且只有一条语句。SQLite 没有网络协议，所以 `mem sql` 实际是 SSH 到服务器上跑
+`server/sqlrun.mjs`（连接复用，首次 ~0.5s、之后 ~0.17s）。写数据仍然走 `mem a set` 这一套，
+否则会绕过快照和页表重建。
+
+完整的表结构、12 个常用查询（趋势 / 薄弱点 / 重做转化 / 时长分布）和边界说明见
+**[sql.md](sql.md)**。
+

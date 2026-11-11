@@ -1,6 +1,8 @@
-# mem_new
+# mem_web
 
-MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）、线上部署（P4）与写接口（P5）均已跑通，写接口已在线上开启（Bearer token + 限流 + 写前自动快照）。**页面由常驻 Node 进程实时渲染**，写完立刻可见。线上：<https://geyuqi.me/study/>。
+MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。**SQL 数据库是唯一真源**；Markdown 完成一次性导入后归档只读。数据迁移（P0）、本地服务（P1）、本地站点（P2）、改库闭环（P3）、线上部署（P4）与写接口（P5）均已跑通，写接口已在线上开启（Bearer token + 限流 + 写前自动快照）。**页面由常驻 Node 进程实时渲染**，写完立刻可见。线上：<https://geyuqi.me/study/>。
+
+协作约定（agent 必读）：[AGENTS.md](AGENTS.md)——边界、`mem` CLI 铁律、测试与部署门槛。
 
 ## 当前状态
 
@@ -29,6 +31,7 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
   恢复后 `verify.py` 40 项、`smoke-test.mjs` 19 项仍全过。
 - v1 设计文档（Markdown 真源方案）已**原样归档**：[archive/2026-11-11-v1/](archive/2026-11-11-v1/)，含 `01`–`07` 七份文档与旧 README 副本。归档是历史快照，未改动内容；其中的相对链接请以归档目录内文件为准。
 - 原仓库 `/Users/geyuqi/WorkBuddy/mem/` 全程只读，基线 commit `ad4f3ff`，工作区干净。
+  学习空间另开在 `../mem_study/`（只放总结、生词本、草稿；数据仍走 `mem` 命令行与线上库）。
 - **P4 已上线**：<https://geyuqi.me/study/>（页面）与 `/api/*`（读写接口）。
   线上细节见 [deploy/README.md](deploy/README.md)；服务器脚本副本在 [deploy/](deploy/)。
 - **P5 已开启**：线上 `mem-api.service` 以写模式运行，写接口需 `Authorization: Bearer <token>`
@@ -122,8 +125,8 @@ npm ci                   # 按 package-lock.json 精确安装（只有 marked）
 | 命令 | 作用 |
 |---|---|
 | `npm run dev` | 预检 → 同步 JSON → 起服务（等价 `./dev.sh`） |
-| `npm test` | 全量：预检 → 语法 → 导出等价 → 写接口 108 → CLI 21 → 只读 19 |
-| `npm run check` | 只做语法检查（32 个 `.mjs` + 15 个 `.sh`，含 `bin/mem`） |
+| `npm test` | 全量：预检 → 语法 → 导出等价 → SQL 27 → 写接口 108 → CLI 27 → 只读 19 |
+| `npm run check` | 只做语法检查（34 个 `.mjs` + 15 个 `.sh`，含 `bin/mem`） |
 | `npm run site` | 静态构建到 `web/.build/`（离线预览与回滚兜底） |
 
 写接口测试全程跑在 `data/test.db` 上，跑前后比对 `data/mem.db` 与 `data/index.json` 的
@@ -238,7 +241,26 @@ mem q set 2024-exam-q001 answer=E
 `--json` 给脚本与 Agent 用，`--dry-run` 只打印请求不发送；退出码固定为 0 成功 / 1 请求失败 / 2 用法错误。
 Agent 的操作约定与错误码表在 [doc/cli.md §7](doc/cli.md)。
 
-验证：`node server/test-cli.mjs`（21 项，跑在 `data/test.db` 上，正式库 sha256 前后比对）。
+### 预设命令不够就用 SQL
+
+按知识点算正确率、看某题历次判定、找错了两次还标着重做的题——这些写一条 SQL 比加一个命令快。
+完整查询集与边界说明见 **[doc/sql.md](doc/sql.md)**（那里的每条 SQL 都由 `server/test-sql.mjs` 实际执行校验）。
+
+```bash
+mem sql "select topic, count(*) n, round(100.0*sum(correct)/count(*),1) rate
+         from attempts join questions q on q.id=attempts.question_id
+         where correct is not null group by topic order by n desc"
+mem sql --csv "..." > out.csv     # 导出 CSV；--json 给 Agent
+mem schema                        # 4 张表全字段
+mem pull                          # 拉线上库到本机，之后可直接 sqlite3 data/mem.db
+```
+
+SQLite 没有网络协议，所以「直连」= SSH 到数据所在的机器上执行 `server/sqlrun.mjs`
+（`ControlMaster` 复用连接，首次 ~0.5s、之后 ~0.17s）。执行器**只读**：单条语句、只读关键字、
+行数上限、服务器端 20s 超时。写数据仍走 API，否则会绕过快照和页表重建。
+
+验证：`node server/test-cli.mjs`（27 项，跑在 `data/test.db` 上，正式库 sha256 前后比对）、
+`node server/test-sql.mjs`（27 项，只读闸门 + 文档里的 SQL 全跑一遍）。
 
 ## 备份与恢复
 
