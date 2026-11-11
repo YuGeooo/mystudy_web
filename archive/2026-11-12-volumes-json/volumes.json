@@ -59,6 +59,16 @@
       "notes": "全局 1–30；第 4 题条件 (3) 曾两次修正转录，见 paper.md 修订记录"
     },
     {
+      "slug": "reasoning-4",
+      "name": "专项训练四-削弱题",
+      "subject": "管综",
+      "papers": ["专项训练四-削弱题/paper.md"],
+      "answerSources": ["专项训练四-削弱题/答案速查.md"],
+      "totalQuestions": 15,
+      "scorableQuestions": 15,
+      "notes": "《逻辑要点 7 讲》第 4 讲专项训练 4，P311–315，15 题每小题 2 分；题干与选项逐页转录，答案取 P316 速查表（DACDE / CEBBE / EBDAA），已写入各题 answer"
+    },
+    {
       "slug": "math-applied",
       "name": "数学应用题",
       "subject": "管综",

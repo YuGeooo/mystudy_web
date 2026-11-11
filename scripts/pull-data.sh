@@ -31,10 +31,9 @@ scp -q $SSH_OPTS \
   "$SERVER:$REMOTE_DATA/mem.db" \
   "$SERVER:$REMOTE_DATA/index.json" \
   "$SERVER:$REMOTE_DATA/content.json" \
-  "$SERVER:$REMOTE_DATA/volumes.json" \
   "$IN/"
 
-for f in mem.db index.json content.json volumes.json; do
+for f in mem.db index.json content.json; do
   [ -s "$IN/$f" ] || { echo "[pull] 缺少 $f，放弃" >&2; exit 1; }
 done
 

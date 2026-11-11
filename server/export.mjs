@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { get, all } from './db.mjs';
+import { loadTree } from './registry.mjs';
 import { SQL } from './queries.mjs';
 
 /** 与 Python 的 datetime.now(timezone(+8)).isoformat(timespec="seconds") 等价 */
@@ -54,8 +55,7 @@ const asNumber = (v) => {
   return Number.isInteger(v) ? v : Number(v);
 };
 
-function knowledgeNodes(volumes) {
-  const tree = volumes.knowledgeTree;
+function knowledgeNodes(tree) {
   const subjects = new Map(tree.subjects.map((s) => [s.id, s]));
   const nodes = new Map();
   for (const n of tree.nodes) {
@@ -164,8 +164,9 @@ function buildAttempts(sessionsById, questionsById) {
   return out;
 }
 
-export function buildIndex(volumes) {
-  const { nodes } = knowledgeNodes(volumes);
+export function buildIndex() {
+  const tree = loadTree();
+  const { nodes } = knowledgeNodes(tree);
   const { questions, byId: questionsById } = buildQuestions(nodes);
   const { sessions, byId: sessionsById } = buildSessions();
   const attempts = buildAttempts(sessionsById, questionsById);
@@ -198,9 +199,9 @@ export function buildIndex(volumes) {
       errors: [],
     },
     knowledgeTree: {
-      version: volumes.knowledgeTree.version,
-      subjects: volumes.knowledgeTree.subjects,
-      nodes: volumes.knowledgeTree.nodes
+      version: tree.version,
+      subjects: tree.subjects,
+      nodes: tree.nodes
         .filter((n) => nodes.has(n.id))
         .map((n) => nodes.get(n.id)),
     },
@@ -256,8 +257,7 @@ export function buildContent(dbName) {
  * 先写临时文件再 rename，避免导出中途失败留下半个 JSON。
  */
 export function exportAll(config) {
-  const volumes = JSON.parse(fs.readFileSync(config.volumesPath, 'utf8'));
-  const index = buildIndex(volumes);
+  const index = buildIndex();
   const content = buildContent(path.basename(config.dbPath));
 
   for (const [file, payload] of [

@@ -6,8 +6,7 @@
 //
 // 一次备份 = 一个目录：
 //   backups/20261111-193012-pre-write-questions/
-//     mem.db         一致性快照
-//     volumes.json   知识树（不在库里，改坏了同样要能退回）
+//     mem.db         一致性快照（知识树与卷注册都在库里，随库退回）
 //     meta.json      行数、sha256、原因，便于挑选与核对
 //
 // 恢复走命令行 scripts/restore.sh —— 不做「一键恢复」API：
@@ -115,7 +114,6 @@ export function snapshot(reason = 'manual') {
     throw new Error(`备份完整性校验失败（${check}），已删除本次备份`);
   }
 
-  fs.copyFileSync(config.volumesPath, path.join(dir, 'volumes.json'));
   fs.writeFileSync(
     path.join(dir, 'meta.json'),
     JSON.stringify({

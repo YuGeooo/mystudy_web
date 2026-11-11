@@ -16,7 +16,8 @@ SRC = Path("/Users/geyuqi/WorkBuddy/mem")
 BASELINE_INDEX = SRC / "data" / "index.json"
 BASELINE_VOLUMES = SRC / "data" / "volumes.json"
 EXPORT_INDEX = DATA / "index.json"
-EXPORT_VOLUMES = DATA / "volumes.json"
+# v2 之后 volumes.json 退役归档；migrate.py / verify.py 这两个迁移期工具还引用它
+EXPORT_VOLUMES = ROOT / "archive" / "2026-11-12-volumes-json" / "volumes.json"
 SNAPSHOT = DATA / "source-snapshot.json"
 REPORT = ROOT / "doc" / "migration-report.md"
 
@@ -59,6 +60,24 @@ def unenvelope(raw):
         return None, {}
     obj = json.loads(raw)
     return obj.get("text"), obj.get("baseline", {})
+
+
+def load_tree(con: sqlite3.Connection) -> dict:
+    """知识树从库里读（v2 迁移后的 subjects / knowledge_nodes / knowledge_meta）。"""
+    version = int(con.execute(
+        "SELECT value FROM knowledge_meta WHERE key = 'treeVersion'"
+    ).fetchone()[0])
+    subjects = [
+        {"id": r["id"], "name": r["name"], "exam": r["exam"]}
+        for r in con.execute("SELECT id, name, exam FROM subjects ORDER BY ord")
+    ]
+    nodes = [
+        {"id": r["id"], "name": r["name"], "parent": r["subject_id"], "granularity": r["granularity"]}
+        for r in con.execute(
+            "SELECT id, subject_id, name, granularity FROM knowledge_nodes ORDER BY ord"
+        )
+    ]
+    return {"version": version, "subjects": subjects, "nodes": nodes}
 
 
 def connect(path: Path = DB_PATH) -> sqlite3.Connection:

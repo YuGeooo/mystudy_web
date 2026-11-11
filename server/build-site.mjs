@@ -15,11 +15,11 @@ import { buildData } from '../web/render/aggregate.mjs';
 import { buildPaper } from '../web/render/paper.mjs';
 import { renderSite } from '../web/render/render.mjs';
 import { buildIndex, buildContent } from './export.mjs';
+import { loadVolumes } from './registry.mjs';
 import appConfig from './config.mjs';
 import { todayLocal } from './dates.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DATA = path.join(ROOT, 'data');
 const WEB = path.join(ROOT, 'web');
 // 默认输出到 web/.build；服务器构建时用 MEM_OUT 直接指向 release 目录。
 export const BUILD_DIR = process.env.MEM_OUT
@@ -43,14 +43,14 @@ function countBy(items, keyFn) {
 const paperCache = new Map();
 
 /**
- * 试卷：volumes.json 决定顺序与归属，content.json 提供原文。
+ * 试卷：papers 表（卷注册）决定顺序与归属，content.json 提供原文。
  * 一个卷只有一份试卷时用卷 slug（/papers/2024-exam/），有多份时补序号
  * （/papers/formal-logic-1/），保证 URL 稳定、不因文件名带中文而变形。
  */
-function buildPapers(content, volumesJson) {
+function buildPapers(content, volumes) {
   const papers = [];
   const missing = [];
-  for (const volume of volumesJson.volumes || []) {
+  for (const volume of volumes) {
     const paths = (volume.papers || []).filter((p) => content.papers[p] != null);
     for (const p of volume.papers || []) {
       if (content.papers[p] == null) missing.push(p);
@@ -69,7 +69,7 @@ function buildPapers(content, volumesJson) {
       });
     });
   }
-  // 没被任何卷收录的原文不静默丢掉：挂一条 warning，提醒回 volumes.json 补登记
+  // 没被任何卷收录的原文不静默丢掉：挂一条 warning，提醒补卷注册
   for (const p of Object.keys(content.papers)) {
     if (!papers.some((x) => x.path === p)) missing.push(p);
   }
@@ -80,26 +80,24 @@ function buildPapers(content, volumesJson) {
  * 读配置、从库构造数据、解析场次、聚合出渲染所需的全部输入。
  * 每次调用都是全量重算——库小（几十场、几百条作答），实测远快于一次网络往返。
  *
- * paths 只覆盖 siteConfig 与 volumes；数据一律来自配置指向的库
+ * paths 只覆盖 siteConfig；数据一律来自配置指向的库
  * （测试进程 MEM_CONFIG=config.test.json → data/test.db，天然与正式数据隔离）。
  */
 export function prepare(paths = {}) {
   const siteConfigFile = paths.siteConfig || path.join(WEB, 'site.config.json');
-  const volumesFile = paths.volumes || path.join(DATA, 'volumes.json');
 
   const config = readJson(siteConfigFile);
-  const volumes = readJson(volumesFile);
-  // 页面数据直接从库构造，不再读 index.json / content.json 的导出快照。
-  // 两份文件仍然导出（对外契约、备份、离线预览），但不再是渲染输入：
-  // 导出与渲染之间不再有时间窗，绕过接口改了库也不会出现「页面旧、API 新」。
-  const jsonIndex = buildIndex(volumes);
+  // 数据全部来自库：题目/作答从表里构造，卷清单从 papers 表读（registry）。
+  // index.json / content.json 仍然导出（对外契约、备份、离线预览），但不再是渲染输入。
+  const volumes = loadVolumes();
+  const jsonIndex = buildIndex();
   const content = buildContent(path.basename(appConfig.dbPath));
   const timeZone = config.site?.timezone || 'Asia/Shanghai';
 
   // 卷清单单一数据源：与站点 index.mjs 的派生规则逐字一致。
   const volumeNotes = config.volumeNotes || {};
   config.volumes = Object.fromEntries(
-    (volumes.volumes || [])
+    volumes
       .filter((v) => v.papers?.length)
       .map((v) => {
         const dir = v.papers[0].split('/')[0];

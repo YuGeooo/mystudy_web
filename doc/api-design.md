@@ -267,7 +267,7 @@ DELETE /api/questions/:id
 |---|---|---|
 | `paperSlug` | 是 | 卷必须存在 |
 | `type` | 是 | `problem` / `data-sufficiency` / `logic` / `cloze` / `reading` / `new-type` / `translation` / `writing` / `essay` |
-| `topicId` | 是 | **必须在 `volumes.json` 知识树里**，否则 400 `unknown_topic` |
+| `topicId` | 是 | **必须在库里的知识树（`knowledge_nodes` 表）**，否则 400 `unknown_topic` |
 | `topic` | 是 | 展示用中文标签（如「问题求解」），与知识点名不是一回事 |
 | `contentMd` | 是 | 题干 Markdown；不含 `<a id="<id>"></a>` 会自动补在末尾 |
 | `answer` | 否 | 不传 = 未定；`scorable` 默认「有答案才是 1」 |
@@ -297,7 +297,7 @@ POST /api/backups    手动打一份快照（需写模式 + token）
 ```
 backups/<YYYYMMDD-HHMMSS>-<原因>/
   mem.db          VACUUM INTO 出来的一致性副本
-  volumes.json    知识树（不在库里，单独留一份）
+  （知识树与卷注册 v2 起在库表里：subjects / knowledge_nodes / papers.ord）
   meta.json       时间、行数、sha256
 ```
 
@@ -372,7 +372,7 @@ node server/smoke-test.mjs         # 只读链路 19 项回归（需 8137 在跑
 | 没做 | 原因 |
 |---|---|
 | 改卷内题的归属（`paperSlug`） | 换卷会让原文页、卷题量、场次外键同时错位；要换就删了重建 |
-| 知识点树写入 | 知识树在 `volumes.json`（文件），改它要连带调整 `topicAliases` / `mathTopics`，不适合走 HTTP |
+| 知识点树写入 | 知识树在库表 `subjects` / `knowledge_nodes`，改动走 SQL（量小、变更少，暂不做 HTTP 口） |
 | 删除有引用的题 / 非空卷 | 会连带毁掉历史场次；宁可让人先清场次，也不做级联删 |
 | 恢复接口 | 恢复要停服务换文件，只能命令行 `scripts/restore.sh` |
 | 审计日志（谁在何时改了什么） | 单用户场景价值低；写前快照已能回答「改坏了怎么退」 |

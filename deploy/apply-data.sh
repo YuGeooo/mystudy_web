@@ -6,7 +6,7 @@ cd /
 DATA=/www/data
 IN="$DATA/incoming"
 
-for f in mem.db index.json content.json volumes.json; do
+for f in mem.db index.json content.json; do
   [ -s "$IN/$f" ] || { echo "[data] 缺少 $IN/$f" >&2; exit 1; }
 done
 
@@ -23,7 +23,7 @@ echo "[data] 停 API"
 systemctl stop mem-api.service
 
 rm -f "$DATA/mem.db-wal" "$DATA/mem.db-shm"
-mv -f "$IN/mem.db" "$IN/index.json" "$IN/content.json" "$IN/volumes.json" "$DATA/"
+mv -f "$IN/mem.db" "$IN/index.json" "$IN/content.json" "$DATA/"
 chown deploy:deploy "$DATA"/mem.db "$DATA"/*.json
 chmod 640 "$DATA"/mem.db "$DATA"/*.json
 

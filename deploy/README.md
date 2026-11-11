@@ -203,7 +203,7 @@ ssh root@121.89.87.48 'systemctl enable --now geyuqi-deploy.timer'
 **① 写接口写前快照**（`/www/data/backups/<TS>-<方法>-<资源>/`，保留 20 份）
 
 每次调写接口前自动生成，内容与下面那份一样。`GET /api/backups` 可以列出来。
-恢复要停服务，所以只提供命令行：把快照里的 `mem.db` + `volumes.json` 拷回 `/www/data/`，
+恢复要停服务，所以只提供命令行：把快照里的 `mem.db` 拷回 `/www/data/`（知识树与卷注册都在库里），
 `chown deploy:deploy`，重启 `mem-api`，再触发一次重建。
 
 **② 每日全量备份**（`/www/backup/<YYYYMMDD>/`，保留 14 天）
@@ -211,7 +211,7 @@ ssh root@121.89.87.48 'systemctl enable --now geyuqi-deploy.timer'
 `mem-backup.timer` 每天 03:30（±5 分钟随机延迟）执行 `backup-db.sh`：
 
 - `sqlite3 .backup` 热备份（对正在写的连接也安全，不需要停服务）
-- 同时拷走 `index.json` / `content.json` / `volumes.json`，保证四份文件属于同一时点
+- 同时拷走 `index.json` / `content.json`，保证三份文件属于同一时点
 - 备份后跑 `PRAGMA integrity_check`，失败则删掉本次备份并报错退出
 
 手动触发与检查：
@@ -229,7 +229,7 @@ ssh root@121.89.87.48 '
   D=$(ls -1dt /www/backup/20* | head -1)
   systemctl stop mem-api
   rm -f /www/data/mem.db-wal /www/data/mem.db-shm
-  cp "$D"/mem.db "$D"/index.json "$D"/content.json "$D"/volumes.json /www/data/
+  cp "$D"/mem.db "$D"/index.json "$D"/content.json /www/data/
   chown deploy:deploy /www/data/*
   systemctl start mem-api
   systemctl start geyuqi-deploy.service

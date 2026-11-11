@@ -47,10 +47,6 @@ const exportIndexPath = path.resolve(
 const exportContentPath = path.resolve(
   ROOT, process.env.MEM_EXPORT_CONTENT || exportCfg.content || path.join('data', 'content.json')
 );
-const volumesPath = path.resolve(
-  ROOT, process.env.MEM_VOLUMES || raw.volumes || path.join('data', 'volumes.json')
-);
-
 // ---- 备份 ----
 // 写接口每次写库前自动快照，改坏了能退回去。只读进程不做备份。
 const backupCfg = raw.backup || {};
@@ -64,7 +60,6 @@ export default {
   configPath: CONFIG_PATH,
   configName: CONFIG_NAME,
   dbPath,
-  volumesPath,
   exportIndexPath,
   exportContentPath,
   backupDir,

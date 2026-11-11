@@ -2,14 +2,13 @@
 //
 // 这两张表是「题库」，比场次/作答更底层：改动会连带影响导出契约与站点题库页，
 // 所以每条写路径都守三条：
-//   1. topic_id 必须在 volumes.json 的知识树里 —— 否则导出器直接抛错
+//   1. topic_id 必须在库里的知识树（subjects / knowledge_nodes）里 —— 否则导出器直接抛错
 //   2. 题的原文归属（notes.baseline.paper）必须在卷的 paperPrefix 里 ——
 //      否则 content.json 的原文页会静默少一块
 //   3. 删除有保护：题被作答引用、卷里还有题/场次，一律拒绝，
 //      把「删数据」这件事挡在误操作之外
-import fs from 'node:fs';
-import config from './config.mjs';
 import { get, all, run, withTransaction } from './db.mjs';
+import { loadTree } from './registry.mjs';
 import {
   ApiError, envelope, unenvelope, nowIso, needString, asBoolInt,
 } from './write.mjs';
@@ -25,15 +24,11 @@ const jdump = (v) => JSON.stringify(v);
 // ---------------------------------------------------------------- 知识树
 
 let tree = null;
-let treeStamp = 0;
 
-/** vols.json 里改知识点后不用重启进程：按 mtime 刷新。 */
+/** 树在库里（subjects / knowledge_nodes）；写树同样走库，同进程读到的一直是新的。 */
 function knowledgeNodes() {
-  const st = fs.statSync(config.volumesPath);
-  if (!tree || st.mtimeMs !== treeStamp) {
-    const v = JSON.parse(fs.readFileSync(config.volumesPath, 'utf8'));
-    tree = new Map(v.knowledgeTree.nodes.map((n) => [n.id, n]));
-    treeStamp = st.mtimeMs;
+  if (!tree) {
+    tree = new Map(loadTree().nodes.map((n) => [n.id, n]));
   }
   return tree;
 }
@@ -44,7 +39,7 @@ function assertTopic(topicId) {
   if (!node) {
     throw new ApiError(
       400, 'unknown_topic',
-      `知识点不存在：${topicId}（知识树在 ${config.volumesPath}，共 ${nodes.size} 个节点）`
+      `知识点不存在：${topicId}（库里共 ${nodes.size} 个知识点；改树请更新 subjects / knowledge_nodes 表）`
     );
   }
   return node;

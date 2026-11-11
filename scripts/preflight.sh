@@ -37,7 +37,7 @@ if ! LOAD_ERR=$(node -e "import('./web/render/render.mjs').then(() => import('./
 fi
 
 # ---- 4. 关键文件 ----
-for f in data/volumes.json web/site.config.json web/assets/app.css web/assets/katex/katex.min.css; do
+for f in web/site.config.json web/assets/app.css web/assets/katex/katex.min.css; do
   [ -e "$f" ] || fail "缺少 $f —— 仓库不完整，检查是否漏拉文件。"
 done
 # 数据库不入版本库（二进制），新机器上需要单独取回。

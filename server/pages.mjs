@@ -17,11 +17,9 @@ import config from './config.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ASSETS = path.join(ROOT, 'web', 'assets');
 
-// 页面渲染只依赖两样东西：库（数据）与 volumes.json（卷顺序与知识树配置）。
-// index.json / content.json 仍然是导出物，但不再是渲染输入。
-const CONTRACTS = {
-  volumes: config.volumesPath,
-};
+// 页面渲染的一切输入都在库里：数据从表构造、卷清单与知识树走 registry。
+// index.json / content.json 仍然导出（对外契约、备份、离线预览），但不再是渲染输入。
+const CONTRACTS = {};
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -75,7 +73,7 @@ function loadAsset(name) {
   }
 }
 
-// 数据指纹：库文件 + WAL + volumes.json。写接口会主动重建页表，但直接改库
+// 数据指纹：库文件 + WAL。写接口会主动重建页表，但直接改库
 // 这种绕开写接口的路径也得让页面跟上，所以每次请求顺手比对一下。
 // 页面不再读导出 JSON，所以这里盯库本身：WAL 模式下新数据先落 -wal，
 // 只看 .db 的 mtime 会漏掉未 checkpoint 的写入。
@@ -83,7 +81,7 @@ let contractsStamp = '';
 
 function contractsFingerprint() {
   const parts = [];
-  for (const file of [config.dbPath, `${config.dbPath}-wal`, CONTRACTS.volumes]) {
+  for (const file of [config.dbPath, `${config.dbPath}-wal`]) {
     try {
       const st = fs.statSync(file);
       parts.push(`${st.size}:${Math.round(st.mtimeMs)}`);

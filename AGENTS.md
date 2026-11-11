@@ -18,7 +18,7 @@
 | `scripts/` | 迁移 / 导出 / 核对（Python，**只在本机跑**）+ 启动、同步、备份、恢复、测试（sh） | 可以 |
 | `deploy/` | systemd unit、nginx 之外的部署脚本、`config.server.json` | 可以，但生效需重新部署 |
 | `bin/mem` | 日常命令行 | 可以 |
-| `data/` | `mem.db` + `index.json` / `content.json` / `volumes.json` | **只在 `data/test.db` 上自由折腾** |
+| `data/` | `mem.db` + 导出物 `index.json` / `content.json`（知识树与卷清单 2026-11-12 起在库里） | **只在 `data/test.db` 上自由折腾** |
 | `archive/` | v1 设计文档原样归档（8 份） | **不改**，历史快照 |
 | `doc/` | 数据模型、API 契约、CLI 手册、迁移报告 | 可以，改实现要同步改这里 |
 

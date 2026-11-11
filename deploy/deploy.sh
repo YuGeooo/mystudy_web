@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # geyuqi.me 部署 v2
-# 数据源：/www/data 的 index.json / content.json / volumes.json（mem.db 为只读 API 用）
+# 数据源：/www/data 的 index.json / content.json（mem.db 为只读 API 用）
 # 站点仓库只负责渲染器与样式，不再 git pull mem 仓库。
 set -euo pipefail
 
@@ -21,7 +21,7 @@ GIT_SSH="ssh -o BatchMode=yes -o ConnectTimeout=15"
 cd "$REPO_DIR"
 
 # ---- 1. 数据完整性（缺文件直接中止，不破坏线上）----
-for f in index.json content.json volumes.json mem.db; do
+for f in index.json content.json mem.db; do
   if [ ! -s "$DATA_DIR/$f" ]; then
     echo "[deploy] 数据文件缺失：$DATA_DIR/$f，中止" >&2
     exit 1
@@ -51,7 +51,7 @@ else
 fi
 
 # ---- 3. 数据变更检测 ----
-DATA_HASH="$(sha256sum "$DATA_DIR/index.json" "$DATA_DIR/content.json" "$DATA_DIR/volumes.json" "$DATA_DIR/mem.db" | sha256sum | awk '{print $1}')"
+DATA_HASH="$(sha256sum "$DATA_DIR/index.json" "$DATA_DIR/content.json" "$DATA_DIR/mem.db" | sha256sum | awk '{print $1}')"
 DATA_CHANGED=0
 if [ "$(cat "$DATA_HASH_FILE" 2>/dev/null || true)" != "$DATA_HASH" ]; then
   DATA_CHANGED=1

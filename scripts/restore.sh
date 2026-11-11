@@ -2,7 +2,7 @@
 # 从备份恢复本机数据库。
 #
 #   ./scripts/restore.sh backups/20261111-193012-post-questions
-#   ./scripts/restore.sh <目录> --volumes    # 连知识树 volumes.json 一起退回
+#   （知识树与卷注册都在库文件里，随 mem.db 一起退回；--volumes 已随 volumes.json 退役删除）
 #
 # 恢复前会把当前库另存一份（backups/<TS>-before-restore），所以恢复本身也能反悔。
 # 服务在跑的时候不要恢复：进程握着旧文件句柄，换掉文件它还在写旧库。
@@ -13,9 +13,6 @@ SRC="${1:-}"
 [ -n "$SRC" ] || { echo "用法：$0 <备份目录> [--volumes]" >&2; exit 1; }
 [ -d "$SRC" ] || SRC="backups/$SRC"
 [ -f "$SRC/mem.db" ] || { echo "[restore] 找不到备份：$SRC/mem.db" >&2; exit 1; }
-
-WITH_VOLUMES=0
-for a in "${@:2}"; do [ "$a" = "--volumes" ] && WITH_VOLUMES=1; done
 
 DB="${MEM_DB:-data/mem.db}"
 
@@ -35,19 +32,13 @@ SAFE="backups/$TS-before-restore"
 mkdir -p "$SAFE"
 if [ -f "$DB" ]; then
   sqlite3 "$DB" ".backup '$SAFE/mem.db'"
-  cp -f data/volumes.json "$SAFE/volumes.json" 2>/dev/null || true
-  rm -f "$SAFE"/mem.db-wal "$SAFE"/mem.db-shm
+    rm -f "$SAFE"/mem.db-wal "$SAFE"/mem.db-shm
   echo "[restore] 当前库已另存：$SAFE"
 fi
 
 cp -f "$SRC/mem.db" "$DB"
 rm -f "$DB-wal" "$DB-shm"
 echo "[restore] 数据库已替换：$SRC/mem.db → $DB"
-
-if [ "$WITH_VOLUMES" = "1" ] && [ -f "$SRC/volumes.json" ]; then
-  cp -f "$SRC/volumes.json" data/volumes.json
-  echo "[restore] 知识树也已退回：data/volumes.json"
-fi
 
 ROWS="$(sqlite3 "$DB" \
   "select (select count(*) from papers)||'/'||(select count(*) from questions)||'/'||(select count(*) from sessions)||'/'||(select count(*) from attempts);")"

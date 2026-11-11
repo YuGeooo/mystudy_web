@@ -13,7 +13,7 @@ mkdir -p "$D"
 
 # SQLite 在线热备份，对只读连接安全
 sqlite3 "$DATA/mem.db" ".backup '$D/mem.db'"
-cp -f "$DATA/index.json" "$DATA/content.json" "$DATA/volumes.json" "$D/"
+cp -f "$DATA/index.json" "$DATA/content.json" "$D/"
 
 if ! sqlite3 -readonly "$D/mem.db" "PRAGMA integrity_check;" | grep -qx ok; then
   echo "[backup] 完整性检查失败，删除本次备份：$D" >&2

@@ -6,7 +6,7 @@
 | 日期 | 2026-11-11 |
 | 真源 | SQL 数据库（SQLite + WAL） |
 | 数据基线 | `mem` @ `ad4f3ff`，`data/index.json` 2026-11-11 版 |
-| 导出物 | `index.json`、`volumes.json`、站点静态页 |
+| 导出物 | `index.json`、`content.json`、站点静态页 |
 
 ## 1. 表清单与关系
 
@@ -28,7 +28,7 @@ papers (7) ──1:N──> sessions (40) ──1:N──> attempts (317)
 - ID 为 `index.json` 的字符串 ID。
 - `sessions.paper_slug` 是外键；7 卷对应 40 场。
 - 布尔用 `0/1 + CHECK`；数组用 JSON 文本。
-- 知识点树（4 学科 / 34 节点 / 140 条逐题映射）存 `volumes.json`，不入库。
+- 知识点树（4 学科 / 34 节点）v2 起入库：`subjects` / `knowledge_nodes` 表；逐题映射就是 `questions.topic_id`。
 - 二进制资产不入库。
 
 ## 2. DDL
@@ -145,7 +145,7 @@ CREATE TABLE attempts (
 | 做对 / 做错次数 | `SELECT question_id, SUM(correct=1), SUM(correct=0) FROM attempts GROUP BY question_id` |
 | 客观题得分 | `correct` × `papers.score_rule_json` 的卷配置分值 |
 | 场次得分 / 卷级汇总分 | 由 `attempts.correct` + `score` 聚合：36/55、126/200、54/100、68/81 |
-| `knowledgeTree` | 由 `volumes.json` 还原 |
+| `knowledgeTree` | 由 `subjects` / `knowledge_nodes` / `knowledge_meta` 表还原 |
 | 逐题评语 / 错因说明 | 读 `process_md` |
 | `meta.activity` | 由 `sessions.date` 聚合为「日期 + 计数」；站点提交活动、连续天数、热力图读该字段 |
 
@@ -184,8 +184,8 @@ CREATE TABLE attempts (
 | `index.json` `attempts[]` | `attempts` 的判定 / 估分 / `is_redo`；`errorNote`、`errorTags` 随正文进 `process_md`，主标签进 `error_tag`；`date` 导出时 `JOIN sessions` 填回 |
 | `answer*.md` 正文 | `process_md`：判定表之后的逐题分析、订正、推演、评语、整体判断 |
 | `paper.md` / 应用题.md | `content_md`：题干，含 LaTeX 与合并题号标题 |
-| `volumes.json` | `papers` 元数据 / `score_rule_json`；知识树与别名留在 JSON |
-| `knowledgeTree` | 不入库，导出时由 `volumes.json` 还原 |
+| （volumes.json 已退役） | 卷注册就是 `papers` 表 + `notes.baseline`；知识树入库 |
+| `knowledgeTree` | 入库（v2），导出时由 `subjects` / `knowledge_nodes` 还原 |
 
 导入对原仓库只读；导入完成后原仓库归档。
 

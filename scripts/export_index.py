@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """从 mem.db 导出站点读取的 index.json。
 
-只读数据库 + 伴生配置 volumes.json；不读基线 index.json、不读原仓库 Markdown。
+只读数据库（知识树在 subjects / knowledge_nodes 表里）；不读基线 index.json、不读原仓库 Markdown。
 字段与顺序严格对齐站点契约，数据库新增的 content_md / process_md 不进入导出物。
 """
 from __future__ import annotations
@@ -13,8 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from memdb import (  # noqa: E402
-    A_FIELDS, EXPORT_INDEX, EXPORT_VOLUMES, Q_FIELDS, S_FIELDS,
-    connect, read_json, unenvelope,
+    A_FIELDS, EXPORT_INDEX, Q_FIELDS, S_FIELDS,
+    connect, load_tree, unenvelope,
 )
 
 TIMING_MODES = ("session", "per-question", "mixed", "none")
@@ -31,8 +31,7 @@ def as_number(v):
     return int(v) if float(v).is_integer() else v
 
 
-def knowledge_nodes(volumes: dict):
-    tree = volumes["knowledgeTree"]
+def knowledge_nodes(tree: dict):
     subjects = {s["id"]: s for s in tree["subjects"]}
     nodes = {}
     for n in tree["nodes"]:
@@ -139,9 +138,9 @@ def main(argv=None) -> int:
     ap.add_argument("--out", help="输出文件（默认 data/index.json）")
     args = ap.parse_args(argv)
 
-    volumes = read_json(EXPORT_VOLUMES)
-    subjects, nodes = knowledge_nodes(volumes)
     con = connect(Path(args.db)) if args.db else connect()
+    tree = load_tree(con)
+    subjects, nodes = knowledge_nodes(tree)
 
     papers = con.execute("SELECT * FROM papers ORDER BY rowid").fetchall()
     questions, _ = build_questions(con, nodes)
@@ -182,9 +181,9 @@ def main(argv=None) -> int:
             "errors": [],
         },
         "knowledgeTree": {
-            "version": volumes["knowledgeTree"]["version"],
-            "subjects": volumes["knowledgeTree"]["subjects"],
-            "nodes": [nodes[n["id"]] for n in volumes["knowledgeTree"]["nodes"]
+            "version": tree["version"],
+            "subjects": tree["subjects"],
+            "nodes": [nodes[n["id"]] for n in tree["nodes"]
                       if n["id"] in nodes],
         },
         "questions": questions,

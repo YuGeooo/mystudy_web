@@ -21,7 +21,8 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
   端点 `/api/health` / `/api/meta` / `/api/days`；`node server/smoke-test.mjs` 自测 20 项全通过。
   代码在 `server/`，配置在 `config.local.json`。
 - **P2 本地站点**：`http://127.0.0.1:8137/study/`。三份数据契约：`index.json`、
-  `content.json`（`scripts/export_content.py` 从库里还原 48 份 Markdown 全文）、`volumes.json`。
+  `content.json`（`scripts/export_content.py` 从库里还原 48 份 Markdown 全文）。知识树与卷清单
+  2026-11-12 起也入了库（`subjects` / `knowledge_nodes` / `papers.ord`），`volumes.json` 退役归档。
   渲染器与样式是 `web/` 下的副本。**页面按请求在进程内渲染**（196 页常驻内存，首次 106ms）。
   与原构建器同时间点对比：共同 171 个文件，`data.json` 顶层字段一致，0 警告；
   唯一差异是 3 个「纯 git 提交日」页面消失（学习日 27 → 24），符合 `sessions.date` 口径。
@@ -66,7 +67,7 @@ MEM 项目重构工作区（原名 `mem_new`，2026-11-11 改为 `mem_web`）。
 
 ## 口径决定（已定）
 
-1. **站点数据源**：三份契约 `index.json` / `content.json`（题干与批改全文）/ `volumes.json` 已取代 `git show HEAD:` 与 `git log`。学习日与热力图改由 `sessions.date` 驱动，`commits` 恒为 0。
+1. **站点数据源**：`mem.db` 单一真源（数据 + 知识树 + 卷注册）；`index.json` / `content.json` 降级为导出物。学习日与热力图改由 `sessions.date` 驱动，`commits` 恒为 0。学习日与热力图改由 `sessions.date` 驱动，`commits` 恒为 0。
 2. **数据库选型**：SQLite + WAL（`data/mem.db`）；多用户并发写时再评估 PostgreSQL。
 3. **录入方式**：不做 Web 表单（设计 §11 范围外），但提供受控写接口（P5，线上已开启、需 token）。不在电脑前用 `curl` 直接写线上；在电脑前也可以改完本机库再 `FORCE=1 ./scripts/push-data.sh` 覆盖线上（应急手段）。
 4. **写接口的安全边界**：三道闸门（配置开启 + Bearer token + 连接可写），任一缺失则不注册或拒绝启动；线上三道全开，另加 nginx 限流 5r/s、请求体 2 MB 上限。
@@ -177,7 +178,7 @@ CI 上没有这份数据就跑不了写接口测试。真要接，得先造一�
 跨天也不用管：页面里的「今天」「倒计时天数」按请求时的日期判断，日期一变自动重渲染。
 
 只有一种情况要手动介入——你直接改了库（绕过写接口）。**页面和 `/api/study` 会自动跟上**：
-每次请求都会比对库文件（含 WAL）与 `volumes.json` 的指纹，变了就重建（`reason: contracts-changed`），
+每次请求都会比对库文件（含 WAL）的指纹，变了就重建（`reason: contracts-changed`），
 不需要重启也不需要先导出。`sync.sh` 现在只负责刷新导出契约（备份与对外用途）：
 
 ```bash
@@ -295,7 +296,7 @@ SQLite 没有网络协议，所以有三条传输方式，跑的是同一个只�
 | 线上页面版本 | 每次构建 | `/www/releases/<TS>` | 最近 5 份 |
 
 一份快照就是一个目录：`mem.db`（SQLite `VACUUM INTO` 出来的一致性副本，WAL 也带上）+
-`volumes.json`（知识树不在库里，单独留）+ `meta.json`（时间、四表行数、sha256）。
+`meta.json`（时间、四表行数、sha256）。知识树与卷注册在库文件里，随 `mem.db` 一起退回。
 
 ```bash
 ./scripts/backup.sh                                  # 手动备一份
