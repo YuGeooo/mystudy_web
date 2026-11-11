@@ -237,7 +237,9 @@ export function buildContent(dbName) {
         "SELECT content_md FROM questions WHERE json_extract(notes, '$.baseline.paper') = ? ORDER BY seq",
         p
       ).map((x) => x.content_md);
-      papers[p] = (prefix || '') + blocks.join('');
+      // 题与题之间强制空行：有的卷 content_md 结尾不带换行（如削弱题），
+      // 直接 join('') 会把相邻两题焊在同一行，渲染成一段。
+      papers[p] = (prefix || '') + blocks.join('\n\n');
     }
   }
 
