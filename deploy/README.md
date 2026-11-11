@@ -114,7 +114,9 @@ curl -X POST https://geyuqi.me/api/sessions \
 
 1. 本机检查 `node_modules/marked`、`node_modules/katex` 存在，否则拒绝打包（避免推出一个缺依赖的版本）
 2. 打包 `server/`、`web/render/`、`web/assets/app.css`、`node_modules/`（约 216 KB）
-3. 服务器上解到暂存目录，逐个 `node --check`，并确认包里有 `node_modules/marked`、`node_modules/katex` 与 `web/assets/katex`
+3. 服务器上解到暂存目录，逐个 `node --check`，并确认包里有 `node_modules/marked`、`node_modules/katex` 与 `web/assets/katex`；
+   随后（仍在停服务前）跑 `server/migrate-v2.mjs` 做库结构迁移（幂等，v2 已迁过则是 no-op），
+   失败就原样退出，线上不受影响
 4. 备份旧代码到 `.rollback/`（保留 10 份）
 5. 停服务 → 换 `server`、`web/render`、`web/assets`、`node_modules` → 起服务
 6. 健康检查：服务 active、页表 ≥ 100 页、`import('marked')` 与 `import('katex')` 可解析、
