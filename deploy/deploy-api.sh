@@ -70,11 +70,15 @@ echo "[api] 预检通过（server $(ls -1 "$STAGE"/server/*.mjs | wc -l | tr -d 
 
 # ---- 1.5 库结构守卫：新代码要求知识树/卷注册在库里（subjects / knowledge_nodes）----
 # v2 迁移已于 2026-11-12 完成、脚本已退役；这里只校验不迁移，失败就不上线。
-if ! "$NODE" -e "import('$PWD/server/registry.mjs').then(m=>m.loadTree())" >/dev/null 2>&1; then
+# 用 sqlite3 直查，不走 node：import registry 会连带加载 config，裸进程没有
+# MEM_WRITE_TOKEN，config 直接拒绝启动，守卫会误报「库是旧版」。
+TREE_VERSION="$(sqlite3 data/mem.db "SELECT value FROM knowledge_meta WHERE key='treeVersion'" 2>/dev/null || true)"
+if [ -z "$TREE_VERSION" ]; then
   echo "[api] 库里没有知识树（knowledge_meta 缺失）——数据库是旧版结构，先迁移再部署" >&2
   rm -rf "$STAGE"
   exit 1
 fi
+echo "[api] 库结构 v2 就位（treeVersion=$TREE_VERSION）"
 
 # ---- 2. 备份旧代码 ----
 mkdir -p .rollback
