@@ -11,11 +11,12 @@
 ```bash
 cd ~/WorkBuddy/mem_new
 chmod +x bin/mem
-ln -sf "$PWD/bin/mem" /usr/local/bin/mem    # 没有写权限就 sudo，或者直接用 ./bin/mem
+ln -sf "$PWD/bin/mem" /opt/homebrew/bin/mem     # 换成任意 PATH 里可写的目录即可
 mem --help
 ```
 
-不装也能用，把下面所有 `mem` 换成 `./bin/mem` 即可。
+本机已链接到 `/opt/homebrew/bin/mem`（`/usr/local/bin` 需要 sudo）。
+不装也能用，把下面所有 `mem` 换成 `./bin/mem`。
 
 ## 2. 三个目标地址
 

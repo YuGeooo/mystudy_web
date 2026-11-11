@@ -164,7 +164,7 @@ CI 上没有这份数据就跑不了写接口测试。真要接，得先造一�
 
 ```bash
 # 本机
-./scripts/sync.sh && mem --local export    # 只读进程没有写接口时，重启即可
+./scripts/sync.sh          # 导出 JSON；进程下次请求会发现契约变了并重建页表
 # 线上
 mem export
 ```
@@ -215,7 +215,7 @@ node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段�
 完整说明与字段表见 **[doc/cli.md](doc/cli.md)**，这里只放最常用的。
 
 ```bash
-ln -sf "$PWD/bin/mem" /usr/local/bin/mem     # 装一次
+ln -sf "$PWD/bin/mem" /opt/homebrew/bin/mem  # 装一次（任意 PATH 里可写的目录）
 
 mem health                                    # 服务 + 页表状态
 mem s ls --limit 5                            # 最近 5 场
