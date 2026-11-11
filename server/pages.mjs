@@ -205,7 +205,14 @@ export function serve(req, res, pathname, today) {
     return send(req, res, 404, '{"error":"not found"}\n', 'application/json; charset=utf-8');
   }
 
-  const body = pages.get(rel);
+  let body = pages.get(rel);
+  if (body == null && !rel.endsWith('/') && !path.extname(rel)) {
+    // 有些客户端会把目录 URL 的尾斜杠吃掉（/study/papers/2024-exam）。
+    // 补上 /index.html 再查一次：相对链接按所在目录解析，带不带斜杠结果一致，
+    // 所以直接出页面，不用 301。
+    body = pages.get(`${rel}/index.html`);
+    if (body != null) rel = `${rel}/index.html`;
+  }
   if (body == null) {
     // 用同一份页表里的 404 页，视觉上和站点一致
     const page404 = pages.get('404.html');

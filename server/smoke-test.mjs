@@ -125,6 +125,7 @@ const siteData = await json('/study/data.json');
 const buildReport = await json('/study/build-report.json');
 const sourcePage = await page(encodeURI('/study/source/2025年英语二/answer1/'));
 const paperPage = await page('/study/papers/2024-exam/');
+const paperNoSlash = await fetch(BASE + '/study/papers/2024-exam');
 const katexCss = await fetch(BASE + '/study/assets/katex/katex.min.css');
 const traversal = await fetch(BASE + '/study/%2e%2e%2f%2e%2e%2fetc%2fpasswd');
 
@@ -155,6 +156,11 @@ check('试卷页：锚点与公式都在，KaTeX 样式可访问', () => {
   assert.doesNotMatch(paperPage.text, /\$[A-Za-z\\]/); // 没有漏渲染的行内公式
   assert.equal(katexCss.status, 200);
   assert.match(katexCss.headers.get('content-type') || '', /text\/css/);
+});
+
+check('目录页不带尾斜杠也能访问（客户端会吃掉斜杠）', () => {
+  assert.equal(paperNoSlash.status, 200);
+  assert.match(paperNoSlash.headers.get('content-type') || '', /text\/html/);
 });
 
 check('站点 data.json 与数据库口径一致', () => {
