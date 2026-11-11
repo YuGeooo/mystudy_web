@@ -170,6 +170,12 @@ export function listAttempts({ questionId, redoStatus, limit, offset, process })
   return rows.map((r) => shapeAttempt(r, { process: Boolean(process) }));
 }
 
+export function getAttempt(id, { process } = {}) {
+  const r = get('SELECT * FROM attempts WHERE id = ?', id);
+  if (!r) return null;
+  return shapeAttempt(r, { process: Boolean(process) });
+}
+
 /** 待重做台账：redo_status 非空但还没销账的那批。 */
 export function listRedo() {
   const rows = all(`

@@ -21,6 +21,8 @@ export class ApiError extends Error {
 
 const TIMING_MODES = new Set(['session', 'per-question', 'mixed', 'none']);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// content.json 靠这行标记复原原文页，改场次文件路径时必须同步改它
+const FULLTEXT_MARK = '===== 场次全文：';
 
 // 与 Python 侧 jdump 等价：紧凑分隔符、不排序、保留中文。
 const jdump = (obj) => JSON.stringify(obj);
@@ -153,7 +155,7 @@ function renderAttemptBlock({ attemptId, question, ans, correct, process, fullTe
 
   if (!fullText) return body;
 
-  const marker = `===== 场次全文：${file} =====`;
+  const marker = `${FULLTEXT_MARK}${file} =====`;
   return `${body}\n\n${marker}\n\n\n${String(fullText).replace(/^\n+/, '')}`;
 }
 
@@ -167,6 +169,66 @@ function autoSessionBody({ paper, sessionId, date, attempts }) {
     lines.push('');
   }
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------- 逐题归一化
+
+/**
+ * 单条作答的校验与归一化。创建场次与「给已有场次补一题」共用，
+ * 保证两条路径的判定口径、信封结构完全一致。
+ * label 只用于错误文案（例如 attempts[2]）。
+ */
+function normalizeAttempt(a, label, paperSlug, seen) {
+  if (!a || typeof a !== 'object') {
+    throw new ApiError(400, 'invalid_field', `${label} 必须是对象`);
+  }
+  const questionId = needString(a.questionId, `${label}.questionId`);
+  if (seen) {
+    if (seen.has(questionId)) {
+      throw new ApiError(400, 'duplicate_question', `同一场次里同一题出现两次：${questionId}`);
+    }
+    seen.add(questionId);
+  }
+
+  const question = getQuestion(questionId);
+  assertQuestionInPaper(question, paperSlug);
+
+  const userAnswer = a.userAnswer === undefined || a.userAnswer === null
+    ? null
+    : needString(a.userAnswer, `${label}.userAnswer`, { allowEmpty: true });
+
+  let correct = asBoolInt(a.correct, `${label}.correct`);
+  // 没显式判定时，客观题按答案自动比对；主观题保持未判定
+  if (correct === null && userAnswer && question.answer && question.scorable === 1) {
+    correct = userAnswer.trim().toUpperCase() === String(question.answer).trim().toUpperCase() ? 1 : 0;
+  }
+
+  let substantive = asBoolInt(a.substantiveCorrect, `${label}.substantiveCorrect`);
+  if (substantive === null) substantive = correct;
+
+  const score = asNumberOrNull(a.score, `${label}.score`);
+  const scoreMax = asNumberOrNull(a.scoreMax, `${label}.scoreMax`);
+  if (score !== null && scoreMax !== null && score > scoreMax) {
+    throw new ApiError(400, 'invalid_field', `${label}.score 不能大于 scoreMax`);
+  }
+
+  const { primary, tags } = normalizeErrorTags(a.errorTags, a.errorTag);
+
+  return {
+    question,
+    userAnswer,
+    correct,
+    substantive,
+    score,
+    scoreMax,
+    isRedo: asBoolInt(a.isRedo, `${label}.isRedo`) ?? 0,
+    errorTag: primary,
+    errorTags: tags,
+    errorNote: a.errorNote ?? null,
+    process: a.process ?? a.processMd ?? null,
+    durationMin: asNumberOrNull(a.durationMin, `${label}.durationMin`),
+    durationSource: a.durationSource ?? null,
+  };
 }
 
 // ---------------------------------------------------------------- 创建场次
@@ -208,56 +270,7 @@ export function createSession(input) {
 
   // 逐题校验 + 归一化，全部在写库之前完成（错一条就整体不写）
   const seen = new Set();
-  const prepared = rawAttempts.map((a, idx) => {
-    if (!a || typeof a !== 'object') {
-      throw new ApiError(400, 'invalid_field', `attempts[${idx}] 必须是对象`);
-    }
-    const questionId = needString(a.questionId, `attempts[${idx}].questionId`);
-    if (seen.has(questionId)) {
-      throw new ApiError(400, 'duplicate_question', `同一场次里同一题出现两次：${questionId}`);
-    }
-    seen.add(questionId);
-
-    const question = getQuestion(questionId);
-    assertQuestionInPaper(question, paperSlug);
-
-    const userAnswer = a.userAnswer === undefined || a.userAnswer === null
-      ? null
-      : needString(a.userAnswer, `attempts[${idx}].userAnswer`, { allowEmpty: true });
-
-    let correct = asBoolInt(a.correct, `attempts[${idx}].correct`);
-    // 没显式判定时，客观题按答案自动比对；主观题保持未判定
-    if (correct === null && userAnswer && question.answer && question.scorable === 1) {
-      correct = userAnswer.trim().toUpperCase() === String(question.answer).trim().toUpperCase() ? 1 : 0;
-    }
-
-    let substantive = asBoolInt(a.substantiveCorrect, `attempts[${idx}].substantiveCorrect`);
-    if (substantive === null) substantive = correct;
-
-    const score = asNumberOrNull(a.score, `attempts[${idx}].score`);
-    const scoreMax = asNumberOrNull(a.scoreMax, `attempts[${idx}].scoreMax`);
-    if (score !== null && scoreMax !== null && score > scoreMax) {
-      throw new ApiError(400, 'invalid_field', `attempts[${idx}].score 不能大于 scoreMax`);
-    }
-
-    const { primary, tags } = normalizeErrorTags(a.errorTags, a.errorTag);
-
-    return {
-      question,
-      userAnswer,
-      correct,
-      substantive,
-      score,
-      scoreMax,
-      isRedo: asBoolInt(a.isRedo, `attempts[${idx}].isRedo`) ?? 0,
-      errorTag: primary,
-      errorTags: tags,
-      errorNote: a.errorNote ?? null,
-      process: a.process ?? a.processMd ?? null,
-      durationMin: asNumberOrNull(a.durationMin, `attempts[${idx}].durationMin`),
-      durationSource: a.durationSource ?? null,
-    };
-  });
+  const prepared = rawAttempts.map((a, idx) => normalizeAttempt(a, `attempts[${idx}]`, paperSlug, seen));
 
   const questionCount = Number.isInteger(input.questionCount)
     ? input.questionCount
@@ -493,5 +506,349 @@ export function deleteSession(sessionId) {
     run('DELETE FROM attempts WHERE session_id = ?', sessionId);
     run('DELETE FROM sessions WHERE id = ?', sessionId);
     return { sessionId, deletedAttempts: n };
+  });
+}
+
+// ---------------------------------------------------------------- 订正场次
+
+/** 场次头能改的字段；其余一律 400，防止误传 id / paper_slug 把外键改坏。 */
+const PATCHABLE_SESSION = new Set([
+  'date', 'startedAt', 'durationMin', 'durationSource', 'timingMode',
+  'questionCount', 'note', 'file', 'sourceFile', 'fullText',
+]);
+
+/**
+ * 只改 front matter 里指定的键，其它行原样保留。
+ * 基线里 file 指的是原始试卷 pdf（不是场次 md 路径），所以默认不动它。
+ */
+function setFrontMatter(fm, updates) {
+  const lines = (fm || '---\n---\n').split('\n');
+  const out = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const m = /^([A-Za-z][A-Za-z0-9_]*):\s*(.*)$/.exec(line);
+    if (m && Object.prototype.hasOwnProperty.call(updates, m[1])) {
+      seen.add(m[1]);
+      const v = updates[m[1]];
+      if (v !== null && v !== undefined) out.push(`${m[1]}: ${v}`);
+      continue;
+    }
+    out.push(line);
+  }
+  const missing = Object.keys(updates)
+    .filter((k) => !seen.has(k) && updates[k] !== null && updates[k] !== undefined);
+  if (missing.length) {
+    const end = out.lastIndexOf('---');
+    const at = end > 0 ? end : out.length;
+    out.splice(at, 0, ...missing.map((k) => `${k}: ${updates[k]}`));
+  }
+  return out.join('\n');
+}
+
+/** 作答增删后按卷内顺序重算 question_ids 与 question_count，避免两处口径打架。 */
+function syncSessionQuestions(sessionId, ts) {
+  const ids = all(
+    `SELECT a.question_id AS id
+       FROM attempts a JOIN questions q ON q.id = a.question_id
+      WHERE a.session_id = ? ORDER BY q.seq`,
+    sessionId
+  ).map((r) => r.id);
+  run(
+    'UPDATE sessions SET question_ids = ?, question_count = ?, updated_at = ? WHERE id = ?',
+    jdump(ids), ids.length, ts, sessionId
+  );
+  return ids;
+}
+
+/**
+ * PATCH /api/sessions/:id
+ * 补的是「录错了只能删了重录」这个坑：日期、时长、计时方式、备注、场次文件路径、正文。
+ * 改日期会连带把作答 id 的日期前缀与正文里的 <!-- attempt: ... --> 注释一起改掉，
+ * 保持 id 与场次日期同源；改文件路径会同步改 process_md 里的全文分隔标记，
+ * 否则导出的 content.json 找不到原文。
+ */
+export function patchSession(sessionId, patch) {
+  if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) {
+    throw new ApiError(400, 'invalid_body', '请求体不能为空');
+  }
+  const unknown = Object.keys(patch).filter((k) => !PATCHABLE_SESSION.has(k));
+  if (unknown.length) {
+    throw new ApiError(400, 'unknown_field', `不支持修改的字段：${unknown.join(', ')}`);
+  }
+
+  const row = get('SELECT * FROM sessions WHERE id = ?', sessionId);
+  if (!row) throw new ApiError(404, 'not_found', `场次不存在：${sessionId}`);
+  const { text, baseline } = unenvelope(row.note);
+  const oldFile = baseline.file ?? null;
+
+  let date = row.date;
+  if ('date' in patch) {
+    date = needString(patch.date, 'date');
+    if (!DATE_RE.test(date)) throw new ApiError(400, 'invalid_field', 'date 必须是 YYYY-MM-DD');
+  }
+
+  let timingMode = row.timing_mode;
+  if ('timingMode' in patch) {
+    timingMode = needString(patch.timingMode, 'timingMode');
+    if (!TIMING_MODES.has(timingMode)) {
+      throw new ApiError(400, 'invalid_field', `timingMode 只能是 ${[...TIMING_MODES].join(' | ')}`);
+    }
+  }
+
+  let durationMin = row.duration_min;
+  if ('durationMin' in patch) {
+    durationMin = asNumberOrNull(patch.durationMin, 'durationMin');
+    if (durationMin !== null && durationMin < 0) {
+      throw new ApiError(400, 'invalid_field', 'durationMin 不能为负');
+    }
+  }
+
+  let startedAt = row.started_at;
+  if ('startedAt' in patch) {
+    startedAt = patch.startedAt === null ? null : needString(patch.startedAt, 'startedAt');
+  }
+
+  // 与创建口径一致：给了时长却没给来源，按 timer 记；时长清空则来源一起清空
+  let durationSource = row.duration_source;
+  if ('durationSource' in patch) {
+    durationSource = patch.durationSource === null ? null : String(patch.durationSource);
+  } else if ('durationMin' in patch) {
+    durationSource = durationMin !== null ? (durationSource ?? 'timer') : null;
+  }
+
+  let questionCount = row.question_count;
+  if ('questionCount' in patch) {
+    if (!Number.isInteger(patch.questionCount) || patch.questionCount < 0) {
+      throw new ApiError(400, 'invalid_field', 'questionCount 必须是非负整数');
+    }
+    questionCount = patch.questionCount;
+  }
+
+  let file = oldFile;
+  if ('file' in patch) file = needString(patch.file, 'file');
+
+  const noteText = 'note' in patch
+    ? (patch.note === null ? null : String(patch.note))
+    : text;
+
+  return withTransaction(() => {
+    if (file !== oldFile) {
+      const taken = get(
+        "SELECT id FROM sessions WHERE json_extract(note, '$.baseline.file') = ? AND id <> ?",
+        file, sessionId
+      );
+      if (taken) throw new ApiError(409, 'file_exists', `场次文件 ${file} 已被 ${taken.id} 占用`);
+    }
+
+    const ts = nowIso();
+    const carrier = get(
+      'SELECT id, process_md FROM attempts WHERE session_id = ? ORDER BY rowid LIMIT 1',
+      sessionId
+    );
+    let carrierMd = carrier ? (carrier.process_md || '') : null;
+    let carrierDirty = false;
+
+    if (file !== oldFile) {
+      if (!carrier) throw new ApiError(409, 'no_fulltext_carrier', `场次 ${sessionId} 没有作答，无法承载正文`);
+      const oldMarker = `${FULLTEXT_MARK}${oldFile} =====`;
+      const pos = carrierMd.indexOf(oldMarker);
+      if (pos < 0) {
+        throw new ApiError(
+          409, 'fulltext_missing',
+          `场次 ${sessionId} 的正文分隔标记里不是「${oldFile}」，无法只改路径`
+        );
+      }
+      carrierMd = carrierMd.slice(0, pos) + `${FULLTEXT_MARK}${file} =====` + carrierMd.slice(pos + oldMarker.length);
+      carrierDirty = true;
+    }
+
+    if ('fullText' in patch) {
+      if (!carrier) throw new ApiError(409, 'no_fulltext_carrier', `场次 ${sessionId} 没有作答，无法承载正文`);
+      const body = String(patch.fullText ?? '');
+      const marker = `${FULLTEXT_MARK}${file} =====`;
+      const pos = carrierMd.indexOf(marker);
+      // 分隔标记之前是该题自己的推演段落，必须保留；标记之后整段换成新正文
+      carrierMd = pos < 0
+        ? `${carrierMd.trimEnd()}\n\n${marker}\n\n${body}`
+        : `${carrierMd.slice(0, pos)}${marker}\n\n${body}`;
+      carrierDirty = true;
+    }
+
+    if (carrierDirty) {
+      run('UPDATE attempts SET process_md = ?, updated_at = ? WHERE id = ?', carrierMd, ts, carrier.id);
+    }
+
+    // front matter 只在相关字段变动时重写，避免动到基线的其它行
+    let frontMatter = baseline.frontMatter ?? null;
+    if (['date', 'startedAt', 'durationMin', 'timingMode', 'sourceFile'].some((k) => k in patch)) {
+      const oldTime = /^time:\s*(.+)$/m.exec(frontMatter || '')?.[1] ?? null;
+      const suffix = 'startedAt' in patch
+        ? (startedAt && startedAt.length >= 16 ? ` ${startedAt.slice(11, 16)}` : '')
+        : (/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/.exec(oldTime || '')?.[1] ?? '');
+      frontMatter = setFrontMatter(frontMatter, {
+        time: `${date}${suffix}`,
+        timingMode,
+        duration: durationMin === null ? null : `${durationMin} min`,
+        ...('sourceFile' in patch
+          ? { file: patch.sourceFile === null ? null : String(patch.sourceFile) }
+          : {}),
+      });
+    }
+
+    run(
+      `UPDATE sessions
+          SET date = ?, started_at = ?, duration_min = ?, timing_mode = ?,
+              duration_source = ?, question_count = ?, note = ?, updated_at = ?
+        WHERE id = ?`,
+      date, startedAt, durationMin, timingMode, durationSource, questionCount,
+      envelope(noteText, { ...baseline, file, frontMatter }), ts, sessionId
+    );
+
+    let renamed = 0;
+    if (date !== row.date) {
+      const rows = all(
+        'SELECT id, question_id, process_md FROM attempts WHERE session_id = ? ORDER BY rowid',
+        sessionId
+      );
+      for (const a of rows) {
+        // 只改符合「<日期>-<场次>-<题号>」约定的 id；不符合的原样保留，避免乱改历史数据
+        if (!a.id.startsWith(`${row.date}-${sessionId}-`)) continue;
+        const newId = `${date}-${sessionId}-${a.question_id}`;
+        if (newId === a.id) continue;
+        if (get('SELECT 1 AS x FROM attempts WHERE id = ?', newId)) {
+          throw new ApiError(409, 'attempt_exists', `改日期后作答 id 冲突：${newId}`);
+        }
+        const md = (a.process_md || '')
+          .replace(/^<!-- attempt: [^|]*\|/, `<!-- attempt: ${newId} |`);
+        run('UPDATE attempts SET id = ?, process_md = ?, updated_at = ? WHERE id = ?', newId, md, ts, a.id);
+        renamed += 1;
+      }
+    }
+
+    return {
+      sessionId,
+      date,
+      file,
+      timingMode,
+      durationMin,
+      durationSource,
+      questionCount,
+      changed: Object.keys(patch).length,
+      renamedAttempts: renamed,
+    };
+  });
+}
+
+// ---------------------------------------------------------------- 补录单题
+
+/**
+ * POST /api/sessions/:id/attempts
+ * 给已有场次补一题（漏录）。不入整份正文的标记 —— 标记在第一条作答上，这里只存本题段落。
+ */
+export function addAttempt(sessionId, input) {
+  if (!input || typeof input !== 'object') {
+    throw new ApiError(400, 'invalid_body', '请求体必须是对象');
+  }
+  const row = get('SELECT * FROM sessions WHERE id = ?', sessionId);
+  if (!row) throw new ApiError(404, 'not_found', `场次不存在：${sessionId}`);
+
+  const prepared = normalizeAttempt(input, 'attempt', row.paper_slug, null);
+  const { baseline } = unenvelope(row.note);
+  const file = baseline.file ?? '';
+  const attemptId = `${row.date}-${sessionId}-${prepared.question.id}`;
+
+  return withTransaction(() => {
+    if (get('SELECT 1 AS x FROM attempts WHERE session_id = ? AND question_id = ?',
+      sessionId, prepared.question.id)) {
+      throw new ApiError(400, 'duplicate_question', `该场次已有这道题的作答：${prepared.question.id}`);
+    }
+    if (get('SELECT 1 AS x FROM attempts WHERE id = ?', attemptId)) {
+      throw new ApiError(409, 'attempt_exists', `作答已存在：${attemptId}`);
+    }
+
+    const ts = nowIso();
+    const processMd = renderAttemptBlock({
+      attemptId,
+      question: prepared.question,
+      ans: prepared.userAnswer,
+      correct: prepared.correct,
+      process: prepared.process,
+      fullText: null,
+      file,
+    });
+
+    run(
+      `INSERT INTO attempts
+         (id, session_id, question_id, user_answer, correct, substantive_correct,
+          score, score_max, is_redo, error_tag, redo_status, resolved_at, process_md,
+          notes, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      attemptId, sessionId, prepared.question.id, prepared.userAnswer, prepared.correct,
+      prepared.substantive, prepared.score, prepared.scoreMax, prepared.isRedo,
+      prepared.errorTag, null, null, processMd,
+      envelope(null, {
+        source: `${file} ### Answer : ${prepared.userAnswer ?? '—'} ${mark(prepared.correct)}`,
+        errorTags: prepared.errorTags,
+        errorNote: prepared.errorNote,
+        durationMin: prepared.durationMin,
+        durationSource: prepared.durationSource,
+      }), ts
+    );
+
+    const ids = syncSessionQuestions(sessionId, ts);
+    return {
+      sessionId,
+      attemptId,
+      questionId: prepared.question.id,
+      questionCount: ids.length,
+      attemptCount: ids.length,
+    };
+  });
+}
+
+// ---------------------------------------------------------------- 撤销单题
+
+/**
+ * DELETE /api/attempts/:id
+ * 允许删单题，但两条红线：
+ *   1. 最后一条不能删（场次会变成没有作答，导出直接报错）→ 用删整场
+ *   2. 承载「场次全文」标记的那条被删时，标记段要搬给新的第一条，否则原文页丢失
+ */
+export function deleteAttempt(attemptId) {
+  const row = get('SELECT * FROM attempts WHERE id = ?', attemptId);
+  if (!row) throw new ApiError(404, 'not_found', `作答不存在：${attemptId}`);
+
+  return withTransaction(() => {
+    const rows = all(
+      'SELECT id, question_id, process_md FROM attempts WHERE session_id = ? ORDER BY rowid',
+      row.session_id
+    );
+    if (rows.length <= 1) {
+      throw new ApiError(
+        400, 'last_attempt',
+        '这是该场次最后一条作答；要清空请删整场 DELETE /api/sessions/:id'
+      );
+    }
+
+    const ts = nowIso();
+    const md = rows.find((r) => r.id === attemptId)?.process_md || '';
+    const pos = md.indexOf(FULLTEXT_MARK);
+    if (pos >= 0) {
+      const block = md.slice(pos);
+      const target = rows.find((r) => r.id !== attemptId);
+      const merged = `${(target.process_md || '').trimEnd()}\n\n${block}`;
+      run('UPDATE attempts SET process_md = ?, updated_at = ? WHERE id = ?', merged, ts, target.id);
+    }
+
+    run('DELETE FROM attempts WHERE id = ?', attemptId);
+    const ids = syncSessionQuestions(row.session_id, ts);
+
+    return {
+      attemptId,
+      sessionId: row.session_id,
+      questionId: row.question_id,
+      remainingAttempts: rows.length - 1,
+      questionCount: ids.length,
+    };
   });
 }

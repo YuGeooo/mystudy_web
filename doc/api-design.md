@@ -39,6 +39,7 @@ token 从环境变量 `MEM_WRITE_TOKEN` 读取（≥16 字符），不写进配�
 | GET | `/api/sessions` | 支持 `from` / `to` / `paper` / `limit` / `offset` |
 | GET | `/api/sessions/:id` | 场次 + 逐题作答；`include=process` 带上批改全文 |
 | GET | `/api/attempts` | 支持 `questionId` / `redoStatus` / `include=process` |
+| GET | `/api/attempts/:id` | 单条作答；`include=process` 带上该题推演 |
 | GET | `/api/redo` | 待重做台账（`redo_status` 非空），带 `resolved` 标记 |
 
 只读接口不需要 token，也不需要写模式。
@@ -135,10 +136,50 @@ POST /api/attempts/:id/resolve   { "date": "2026-11-11" }
 DELETE /api/sessions/:id
 ```
 
-先删子表再删场次，返回 `deletedAttempts`。用于输错时的整场回退；不提供单条作答删除，
-因为「少一题」会让场次题量口径失真。
+先删子表再删场次，返回 `deletedAttempts`。用于整场录错时的回退。
 
-### 4.5 重新导出
+### 4.5 订正场次头
+
+```
+PATCH /api/sessions/:id
+```
+
+可改：`date`、`startedAt`、`durationMin`、`durationSource`、`timingMode`、`questionCount`、
+`note`、`file`（场次 md 路径，`content.json` 的键）、`sourceFile`（front matter 里的原始试卷名）、
+`fullText`（整份正文）。其它字段一律 400。
+
+三条连带规则，都是为了让导出物仍然自洽：
+
+| 改动 | 连带动作 |
+|---|---|
+| `date` | 作答 id 的日期前缀与 `process_md` 里的 `<!-- attempt: … -->` 一起改，`frontMatter.time` 同步 |
+| `file` | `process_md` 里的 `===== 场次全文：<file> =====` 标记同步改，否则 `content.json` 找不到原文 |
+| `fullText` | 只替换标记之后的正文，该题自己的推演段落保留 |
+
+`file` 与其它场次重名 → 409 `file_exists`。
+
+### 4.6 补录单题
+
+```
+POST /api/sessions/:id/attempts
+```
+
+给已存在的场次补一题（漏录）。题必须属于该场次的卷，且同场不能重复 → 400
+`duplicate_question` / `question_not_in_paper`。写入后 `question_ids` 与 `question_count`
+按卷内顺序重算。新作答不带「场次全文」标记 —— 标记固定在第一条上。
+
+### 4.7 撤销单题
+
+```
+DELETE /api/attempts/:id
+```
+
+删一条作答，`question_count` 同步减一。两条红线：
+
+- 最后一条不能删 → 400 `last_attempt`（场次没有作答会让导出直接报错，要清空请删整场）
+- 被删的那条若承载「场次全文」标记，标记段整体搬给新的第一条，原文页不丢
+
+### 4.8 重新导出
 
 ```
 POST /api/export
@@ -186,13 +227,16 @@ POST /api/export
 | 405 | — | 非可写路径用错方法 |
 | 409 | `session_exists` / `file_exists` / `attempt_exists` | 唯一性冲突 |
 | 409 | `not_yet_correct` | 未做对却要销账 |
+| 409 | `no_fulltext_carrier` / `fulltext_missing` | 场次没有作答承载正文 / 正文标记对不上 |
+| 400 | `last_attempt` | 要删场次最后一条作答 |
 | 413 | `body_too_large` | 超过 2 MB |
 | 500 | `internal` | 其它 |
 
 ## 7. 验证方式
 
 ```bash
-node server/test-write-api.mjs     # 44 项：鉴权、创建、校验、事务性、订正、销账、撤销、导出、正式库保护
+node server/test-write-api.mjs     # 74 项：鉴权、创建、校验、事务性、订正、销账、撤销、
+                                   #        场次订正、补录单题、撤销单题、导出、正式库保护
 node scripts/compare-export.mjs    # Node 导出器与 Python 导出器逐字段 + 键顺序比对
 node server/smoke-test.mjs         # 只读链路 19 项回归（需 8137 在跑）
 ```

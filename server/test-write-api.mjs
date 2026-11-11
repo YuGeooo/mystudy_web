@@ -338,8 +338,184 @@ try {
   const delAgain = await api('DELETE', `/api/sessions/${sessionId}`);
   check('重复删除 → 404', () => assert.equal(delAgain.status, 404));
 
+  // ---- 场次订正 / 补录单题 / 撤销单题 ----
+  console.log('\n=== 8. 场次订正与单题增删 ===');
+  const TARGET = '2024-exam-a900';
+  const FILE0 = '2024-exam/answer900.md';
+  const FILE1 = '2024-exam/answer900-fix.md';
+  const mk = await api('POST', '/api/sessions', {
+    paperSlug: '2024-exam', date: TODAY, sessionId: TARGET, file: FILE0,
+    durationMin: 30, timingMode: 'session',
+    fullText: '# 订正测试场次\n\n原始正文。\n',
+    attempts: [
+      { questionId: q1.id, userAnswer: q1.answer, process: '原样保留。' },
+      { questionId: q2.id, userAnswer: 'ZZZ', errorTag: '审题' },
+    ],
+  });
+  check('准备：显式 sessionId 建场 → 201', () => assert.equal(mk.status, 201));
+
+  const ps = await api('PATCH', `/api/sessions/${TARGET}`, {
+    durationMin: 50, timingMode: 'per-question', note: '补记：分段计时',
+  });
+  check('PATCH 场次头 → 200', () => assert.equal(ps.status, 200));
+  let s8 = (await api('GET', `/api/sessions/${TARGET}`, undefined, { token: null })).body;
+  check('时长 / 计时方式 / 备注已更新', () => {
+    assert.equal(s8.durationMin, 50);
+    assert.equal(s8.timingMode, 'per-question');
+    assert.equal(s8.note, '补记：分段计时');
+  });
+
+  const pd = await api('PATCH', `/api/sessions/${TARGET}`, { date: '2026-11-10' });
+  check('改日期 → 200 且作答 id 前缀同步', () => {
+    assert.equal(pd.status, 200);
+    assert.equal(pd.body.renamedAttempts, 2);
+  });
+  s8 = (await api('GET', `/api/sessions/${TARGET}`, undefined, { token: null })).body;
+  check('场次日期与作答 id 都换成新日期', () => {
+    assert.equal(s8.date, '2026-11-10');
+    assert.ok(s8.attempts.every((a) => a.id.startsWith(`2026-11-10-${TARGET}-`)), '作答 id 没跟着改');
+  });
+  const s8p = (await api('GET', `/api/sessions/${TARGET}?include=process`, undefined, { token: null })).body;
+  check('正文里的 attempt 注释同步改名', () => {
+    assert.ok(s8p.attempts.some((a) => a.processMd.startsWith(`<!-- attempt: 2026-11-10-`)));
+  });
+
+  await api('POST', '/api/export', {});
+  const idxP = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/test-index.json'), 'utf8'));
+  const contentP = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/test-content.json'), 'utf8'));
+  check('改日期后导出物仍然自洽', () => {
+    const s = idxP.sessions.find((x) => x.id === TARGET);
+    assert.equal(s.date, '2026-11-10');
+    const a = idxP.attempts.filter((x) => x.sessionId === TARGET);
+    assert.equal(a.length, 2);
+    assert.ok(a.every((x) => x.date === '2026-11-10' && x.id.startsWith('2026-11-10-')));
+    assert.ok(contentP.sessions[FILE0].includes('原始正文'));
+  });
+
+  const pf = await api('PATCH', `/api/sessions/${TARGET}`, { file: FILE1 });
+  check('改场次文件路径 → 200', () => assert.equal(pf.status, 200));
+  const s8f = (await api('GET', `/api/sessions/${TARGET}?include=process`, undefined, { token: null })).body;
+  check('正文分隔标记跟着改文件路径', () => {
+    assert.equal(s8f.file, FILE1);
+    const carrier = s8f.attempts.find((a) => a.processMd.includes('===== 场次全文：'));
+    assert.ok(carrier, '找不到承载正文的作答');
+    assert.ok(carrier.processMd.includes(`===== 场次全文：${FILE1} =====`), '标记没改成新路径');
+  });
+
+  await api('POST', '/api/export', {});
+  const contentF = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/test-content.json'), 'utf8'));
+  check('导出内容键跟着换，旧键消失', () => {
+    assert.ok(contentF.sessions[FILE1], '新键缺原文');
+    assert.equal(contentF.sessions[FILE0], undefined, '旧键还在');
+  });
+
+  const pft = await api('PATCH', `/api/sessions/${TARGET}`, { fullText: '# 订正测试场次\n\n订正后的正文。\n' });
+  check('改整份正文 → 200', () => assert.equal(pft.status, 200));
+  const s8t = (await api('GET', `/api/sessions/${TARGET}?include=process`, undefined, { token: null })).body;
+  check('正文已替换且该题推演段落保留', () => {
+    const carrier = s8t.attempts.find((a) => a.processMd.includes('===== 场次全文：'));
+    assert.ok(carrier.processMd.includes('订正后的正文'), '新正文没写进去');
+    assert.ok(!carrier.processMd.includes('原始正文'), '旧正文还在');
+    assert.ok(carrier.processMd.includes('原样保留'), '本题推演被覆盖了');
+  });
+
+  const pDate = await api('PATCH', `/api/sessions/${TARGET}`, { date: '2026/11/10' });
+  check('场次日期格式错 → 400', () => assert.equal(pDate.status, 400));
+  const pField = await api('PATCH', `/api/sessions/${TARGET}`, { paperSlug: '2020-exam' });
+  check('场次改不可改字段 → 400', () => {
+    assert.equal(pField.status, 400);
+    assert.equal(pField.body.code, 'unknown_field');
+  });
+  const pEmpty = await api('PATCH', `/api/sessions/${TARGET}`, {});
+  check('场次空 body → 400', () => assert.equal(pEmpty.status, 400));
+  const pMissing = await api('PATCH', '/api/sessions/not-exist', { note: 'x' });
+  check('改不存在场次 → 404', () => assert.equal(pMissing.status, 404));
+  const others = (await api('GET', '/api/sessions?limit=5', undefined, { token: null })).body.sessions;
+  const occupied = others.find((s) => s.id !== TARGET)?.file;
+  const pFileDup = await api('PATCH', `/api/sessions/${TARGET}`, { file: occupied });
+  check('文件路径与别的场次撞车 → 409', () => {
+    assert.equal(pFileDup.status, 409);
+    assert.equal(pFileDup.body.code, 'file_exists');
+  });
+
+  // 补录单题
+  const q4 = (await api('GET', '/api/questions/2024-exam-q004', undefined, { token: null })).body;
+  const added = await api('POST', `/api/sessions/${TARGET}/attempts`, {
+    questionId: q4.id, userAnswer: q4.answer, process: '补录：漏了这一题。',
+  });
+  check('补录单题 → 201 且题量 +1', () => {
+    assert.equal(added.status, 201);
+    assert.equal(added.body.questionCount, 3);
+  });
+  const s8add = (await api('GET', `/api/sessions/${TARGET}`, undefined, { token: null })).body;
+  check('补录后场次含 3 条作答，日期沿用新日期', () => {
+    assert.equal(s8add.attempts.length, 3);
+    assert.ok(s8add.attempts.some((a) => a.id === `2026-11-10-${TARGET}-${q4.id}`));
+  });
+
+  const dupAdd = await api('POST', `/api/sessions/${TARGET}/attempts`, { questionId: q1.id });
+  check('补录已存在的题 → 400 duplicate_question', () => {
+    assert.equal(dupAdd.status, 400);
+    assert.equal(dupAdd.body.code, 'duplicate_question');
+  });
+  const crossAdd = await api('POST', `/api/sessions/${TARGET}/attempts`, { questionId: '2020-exam-q001' });
+  check('补录别卷的题 → 400 question_not_in_paper', () => {
+    assert.equal(crossAdd.status, 400);
+    assert.equal(crossAdd.body.code, 'question_not_in_paper');
+  });
+  const addMissing = await api('POST', '/api/sessions/not-exist/attempts', { questionId: q1.id });
+  check('给不存在的场次补题 → 404', () => assert.equal(addMissing.status, 404));
+
+  // 单条作答查询
+  const oneAttempt = await api('GET', `/api/attempts/${added.body.attemptId}`, undefined, { token: null });
+  check('GET /api/attempts/:id → 200', () => {
+    assert.equal(oneAttempt.status, 200);
+    assert.equal(oneAttempt.body.id, added.body.attemptId);
+    assert.equal(oneAttempt.body.questionId, q4.id);
+  });
+  const noAttempt = await api('GET', '/api/attempts/not-exist', undefined, { token: null });
+  check('GET 不存在的作答 → 404', () => assert.equal(noAttempt.status, 404));
+
+  // 删单题：先删承载正文的那条，正文要搬给新的第一条
+  const s8del = (await api('GET', `/api/sessions/${TARGET}?include=process`, undefined, { token: null })).body;
+  const carrier8 = s8del.attempts.find((a) => a.processMd.includes('===== 场次全文：'));
+  const delCarrier = await api('DELETE', `/api/attempts/${carrier8.id}`);
+  check('删掉承载正文的作答 → 200', () => {
+    assert.equal(delCarrier.status, 200);
+    assert.equal(delCarrier.body.remainingAttempts, 2);
+  });
+  const s8after = (await api('GET', `/api/sessions/${TARGET}?include=process`, undefined, { token: null })).body;
+  check('正文搬到新的第一条，没丢', () => {
+    assert.equal(s8after.attempts.length, 2);
+    const newCarrier = s8after.attempts.find((a) => a.processMd.includes('===== 场次全文：'));
+    assert.ok(newCarrier, '正文标记丢了');
+    assert.ok(newCarrier.processMd.includes('订正后的正文'), '正文内容丢了');
+    assert.equal(newCarrier.id, s8after.attempts[0].id, '正文不该挂在非第一条上');
+  });
+  await api('POST', '/api/export', {});
+  const contentDel = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/test-content.json'), 'utf8'));
+  check('删单题后仍能完整导出原文', () => {
+    assert.ok(contentDel.sessions[FILE1].includes('订正后的正文'));
+  });
+
+  const left1 = (await api('GET', `/api/sessions/${TARGET}`, undefined, { token: null })).body.attempts;
+  await api('DELETE', `/api/attempts/${left1[0].id}`);
+  const delLast = await api('DELETE', `/api/attempts/${left1[1].id}`);
+  check('删到只剩一条 → 400 last_attempt', () => {
+    assert.equal(delLast.status, 400);
+    assert.equal(delLast.body.code, 'last_attempt');
+  });
+
+  const cleanup = await api('DELETE', `/api/sessions/${TARGET}`);
+  check('清理测试场次 → 200', () => assert.equal(cleanup.status, 200));
+  const afterCleanup = (await api('GET', '/api/meta', undefined, { token: null })).body;
+  check('订正用例跑完后回到基线', () => {
+    assert.equal(afterCleanup.coverage.sessions, baseSessions);
+    assert.equal(afterCleanup.coverage.attempts, baseAttempts);
+  });
+
   // ---- 导出联动 ----
-  console.log('\n=== 8. 导出联动 ===');
+  console.log('\n=== 9. 导出联动 ===');
   const again = await api('POST', '/api/sessions', { ...createBody, sessionId: undefined });
   const exportRes = await api('POST', '/api/export', {});
   check('POST /api/export → 200', () => assert.equal(exportRes.status, 200));
@@ -381,7 +557,7 @@ try {
 
 // ---------------------------------------------------------------- 正式库保护
 
-console.log('\n=== 9. 正式库保护 ===');
+console.log('\n=== 10. 正式库保护 ===');
 const after = { db: stat(FORMAL_DB), index: stat(FORMAL_INDEX) };
 check('data/mem.db 未被触碰（sha256 + mtime 一致）', () => {
   assert.equal(after.db.hash, before.db.hash, '正式库内容变了');
@@ -391,7 +567,7 @@ check('data/index.json 未被触碰', () => {
   assert.equal(after.index.hash, before.index.hash, '正式导出物被覆盖了');
 });
 
-console.log('\n=== 10. 只读进程仍然拒绝写入 ===');
+console.log('\n=== 11. 只读进程仍然拒绝写入 ===');
 // 8137 可能已被 ./dev.sh 占着（只读配置），这时直接复用它，不再起第二个进程
 async function healthAt(port) {
   try {

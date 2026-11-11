@@ -5,7 +5,7 @@ import { buildMeta, buildDays } from './aggregate.mjs';
 import { todayLocal } from './dates.mjs';
 import { serveStatic } from './static.mjs';
 import * as read from './read-api.mjs';
-import { ApiError, createSession, patchAttempt, resolveRedo, deleteSession } from './write.mjs';
+import { ApiError, createSession, patchSession, addAttempt, patchAttempt, resolveRedo, deleteSession, deleteAttempt } from './write.mjs';
 import { exportAll } from './export.mjs';
 
 const MAX_BODY = 2 * 1024 * 1024;
@@ -107,8 +107,19 @@ export async function handle(req, res) {
         const body = await readBody(req);
         return send(res, 201, { ok: true, ...createSession(body) });
       }
+      if (method === 'POST' && a === 'sessions' && b && c === 'attempts') {
+        const body = await readBody(req);
+        return send(res, 201, { ok: true, ...addAttempt(b, body) });
+      }
+      if (method === 'PATCH' && a === 'sessions' && b && !c) {
+        const body = await readBody(req);
+        return send(res, 200, { ok: true, ...patchSession(b, body) });
+      }
       if (method === 'DELETE' && a === 'sessions' && b) {
         return send(res, 200, { ok: true, ...deleteSession(b) });
+      }
+      if (method === 'DELETE' && a === 'attempts' && b && !c) {
+        return send(res, 200, { ok: true, ...deleteAttempt(b) });
       }
       if (method === 'PATCH' && a === 'attempts' && b && !c) {
         const body = await readBody(req);
@@ -123,8 +134,10 @@ export async function handle(req, res) {
       }
       return send(res, 405, {
         error: 'method not allowed', method, path: url.pathname,
-        hint: '可写端点：POST /api/sessions · DELETE /api/sessions/:id · ' +
-          'PATCH /api/attempts/:id · POST /api/attempts/:id/resolve · POST /api/export',
+        hint: '可写端点：POST /api/sessions · PATCH /api/sessions/:id · ' +
+          'POST /api/sessions/:id/attempts · DELETE /api/sessions/:id · ' +
+          'PATCH /api/attempts/:id · DELETE /api/attempts/:id · ' +
+          'POST /api/attempts/:id/resolve · POST /api/export',
       });
     }
 
@@ -186,6 +199,11 @@ export async function handle(req, res) {
       return send(res, 200, session);
     }
     if (a === 'attempts') {
+      if (b) {
+        const attempt = read.getAttempt(b, { process: q(url, 'include') === 'process' });
+        if (!attempt) throw new ApiError(404, 'not_found', `作答不存在：${b}`);
+        return send(res, 200, attempt);
+      }
       return send(res, 200, {
         attempts: read.listAttempts({
           questionId: q(url, 'questionId'),
@@ -205,7 +223,7 @@ export async function handle(req, res) {
         'GET /api/papers', 'GET /api/papers/:slug',
         'GET /api/questions', 'GET /api/questions/:id',
         'GET /api/sessions', 'GET /api/sessions/:id',
-        'GET /api/attempts', 'GET /api/redo',
+        'GET /api/attempts', 'GET /api/attempts/:id', 'GET /api/redo',
       ],
     });
   } catch (err) {

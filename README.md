@@ -80,16 +80,17 @@ Ctrl+C && ./dev.sh     # 自动同步 + 重建 171 个页面 + 起服务
 | 项 | 说明 |
 |---|---|
 | 契约 | [doc/api-design.md](doc/api-design.md) |
-| 写入 | `POST /api/sessions`（场次+逐题，单事务）· `PATCH /api/attempts/:id` · `POST /api/attempts/:id/resolve` · `DELETE /api/sessions/:id` |
+| 写入 | 增 `POST /api/sessions`（场次+逐题，单事务）· 改 `PATCH /api/sessions/:id`（日期/时长/备注/文件路径/正文）· 补 `POST /api/sessions/:id/attempts` · 删 `DELETE /api/sessions/:id` / `DELETE /api/attempts/:id`（最后一条不许删） |
+| 判定 | `PATCH /api/attempts/:id` · `POST /api/attempts/:id/resolve` |
 | 导出 | `POST /api/export`（Node 版导出器，服务器不需要 Python） |
-| 只读补充 | `/api/papers` · `/api/questions`（含题干全文检索）· `/api/sessions` · `/api/attempts` · `/api/redo` |
+| 只读补充 | `/api/papers` · `/api/questions`（含题干全文检索）· `/api/sessions` · `/api/attempts` · `/api/attempts/:id` · `/api/redo` |
 | 开关 | `write.enabled=true` + `MEM_WRITE_TOKEN`（≥16 字符）+ 连接可写，缺一不可 |
 | 默认 | `config.local.json` 关闭；`config.test.json` 开启（8138，指向 `data/test.db`） |
 
 验证（不碰正式库）：
 
 ```bash
-node server/test-write-api.mjs    # 44 项：鉴权/创建/校验/事务性/订正/销账/撤销/导出/正式库保护
+node server/test-write-api.mjs    # 74 项：鉴权/创建/校验/事务性/订正/销账/场次订正/单题增删/导出/正式库保护
 node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段值与键顺序逐项比对
 ```
 
