@@ -163,6 +163,16 @@ check('目录页不带尾斜杠也能访问（客户端会吃掉斜杠）', () =
   assert.match(paperNoSlash.headers.get('content-type') || '', /text\/html/);
 });
 
+check('试卷列表页的每张卡片点进去都是 200（防止相对路径少一级）', async () => {
+  const listBase = BASE + '/study/papers/';
+  const hrefs = [...paperPage.text.matchAll(/<a class="volume" href="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(hrefs.length >= 8, `列表页应有 8 张卡片，实际 ${hrefs.length}`);
+  for (const href of hrefs) {
+    const res = await fetch(new URL(href, listBase));
+    assert.equal(res.status, 200, `卡片链接 404: ${href}`);
+  }
+});
+
 check('站点 data.json 与数据库口径一致', () => {
   assert.equal(siteData.status, 200);
   assert.equal(siteData.body.days.length, 24);

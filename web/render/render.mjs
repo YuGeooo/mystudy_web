@@ -1069,7 +1069,9 @@ ${paperLine}
  * 这里只负责版式：卷名、题号导航、正文。答案刻意不放——看了答案就不叫看卷了。
  */
 function paperHref(paper) {
-  return `papers/${paper.slug}/`;
+  // 列表页本身在 /study/papers/，卡片与各试卷页是同级目录，直接用 <slug>/。
+  // 写成 papers/<slug>/ 会从列表页解析成 /study/papers/papers/…（线上 404 过）。
+  return `${paper.slug}/`;
 }
 
 function paperCard(paper) {
