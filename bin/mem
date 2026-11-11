@@ -1,0 +1,11 @@
+#!/usr/bin/env node
+// 启动器：bin/mem 常被软链到 /usr/local/bin，先解析真实路径再交给实现。
+// 单独一层是为了让「软链 + 可执行」和「server/ 里全是 .mjs」互不牵扯。
+import { realpathSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const here = path.dirname(realpathSync(fileURLToPath(import.meta.url)));
+const entry = path.join(here, '..', 'server', 'cli.mjs');
+
+await import(pathToFileURL(entry).href);

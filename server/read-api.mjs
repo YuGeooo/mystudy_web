@@ -191,6 +191,7 @@ export function listRedo() {
     questionNumber: r.questionNumber,
     questionTopic: r.questionTopic,
     paperSlug: r.paperSlug,
+    sessionDate: r.sessionDate,
     resolved: r.redo_status === 'resolved',
   }));
 }

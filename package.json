@@ -13,7 +13,11 @@
     "test": "./scripts/test.sh",
     "check": "./scripts/check.sh",
     "site": "node server/build-site.mjs",
-    "export": "node server/export-cli.mjs"
+    "export": "node server/export-cli.mjs",
+    "cli": "./bin/mem"
+  },
+  "bin": {
+    "mem": "./bin/mem"
   },
   "dependencies": {
     "marked": "18.1.3"

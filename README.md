@@ -40,6 +40,8 @@ MEM 项目重构工作区。**SQL 数据库是唯一真源**；Markdown 完成�
   唯一的分叉是 `renderSite()` 多了一个 `emit` 参数（支持渲染到内存），默认行为不变。
 - **加固**：本仓库已纳入 git（`data/mem.db` 与导出 JSON 不入库，见 `.gitignore`）；
   线上 `mem-backup.timer` 每天 03:30 备份 `mem.db` 与三份 JSON 到 `/www/backup/`，保留 14 天，备份后自动校验。
+- **日常入口**：`bin/mem` 命令行（查询 / 录入 / 订正 / 销账 / 题库 / 快照），
+  说明见 [doc/cli.md](doc/cli.md)；`node server/test-cli.mjs` 21 项验收。
 
 ## v1 → v2 的关键变化
 
@@ -162,9 +164,9 @@ CI 上没有这份数据就跑不了写接口测试。真要接，得先造一�
 
 ```bash
 # 本机
-./scripts/sync.sh && curl -X POST 127.0.0.1:8137/api/export   # 只读进程没有写接口时，重启即可
+./scripts/sync.sh && mem --local export    # 只读进程没有写接口时，重启即可
 # 线上
-curl -X POST https://geyuqi.me/api/export -H "Authorization: Bearer $(cat ~/.mem-api-token)"
+mem export
 ```
 
 `POST /api/export` 会把库重新导成 JSON 并重建页表。
@@ -200,12 +202,39 @@ Ctrl+C && ./dev.sh     # 自动同步 + 渲染 171 个页面到内存 + 起服�
 验证（不碰正式库）：
 
 ```bash
-node server/test-write-api.mjs    # 102 项：鉴权/创建/校验/事务性/订正/销账/场次订正/单题增删/题库读写/备份/导出/正式库保护
+node server/test-write-api.mjs    # 108 项：鉴权/创建/校验/事务性/订正/销账/场次订正/单题增删/题库读写/备份/导出/正式库保护
 node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段值与键顺序逐项比对
 ```
 
 `test-write-api.mjs` 用 `sqlite3 .backup` 从 `mem.db` 只读复制出 `data/test.db`，
 跑前记录正式库与 `data/index.json` 的 sha256 + mtime，跑完复查一致才通过。
+
+## 日常使用（mem 命令行）
+
+部署是低频动作；每天发生的是查题、补判定、记一场、标重做。这些用 `bin/mem`，不手写 `curl`。
+完整说明与字段表见 **[doc/cli.md](doc/cli.md)**，这里只放最常用的。
+
+```bash
+ln -sf "$PWD/bin/mem" /usr/local/bin/mem     # 装一次
+
+mem health                                    # 服务 + 页表状态
+mem s ls --limit 5                            # 最近 5 场
+mem q ls --paper 2024-exam --search 不定方程   # 查题（题干全文检索）
+mem s get 2024-exam-a12                       # 场次 + 逐题判定
+mem redo                                      # 待重做台账
+
+mem s new session.json                        # 记一场（单事务，写前自动快照）
+mem a set <attemptId> correct=true errorTag=审题
+mem a done <attemptId>                        # 重做销账
+mem q set 2024-exam-q001 answer=E
+```
+
+默认打线上（`https://geyuqi.me`）；`--local` 打本机只读实例，`--test` 打 8138 测试库。
+写操作要 token（`~/.mem-api-token` 或 `MEM_WRITE_TOKEN`），缺失时 CLI 在本地就拦住。
+`--json` 给脚本与 Agent 用，`--dry-run` 只打印请求不发送；退出码固定为 0 成功 / 1 请求失败 / 2 用法错误。
+Agent 的操作约定与错误码表在 [doc/cli.md §7](doc/cli.md)。
+
+验证：`node server/test-cli.mjs`（21 项，跑在 `data/test.db` 上，正式库 sha256 前后比对）。
 
 ## 备份与恢复
 
@@ -224,7 +253,7 @@ node scripts/compare-export.mjs   # Node 导出器 vs Python 导出器，字段�
 
 ```bash
 ./scripts/backup.sh                                  # 手动备一份
-curl -s 127.0.0.1:8137/api/backups | head -40        # 看有哪些快照
+mem --local backups                                  # 看有哪些快照（线上用 mem backups）
 ./scripts/restore.sh backups/20261111-193012-post-questions
 ./scripts/restore.sh <目录> --volumes                # 连知识树一起退回
 ```
@@ -258,4 +287,4 @@ FORCE=1 ./scripts/push-data.sh
 2. `/www/mem` 旧数据仓库线上已不再拉取，可在确认无回滚需求后归档。
 3. `export_content.py` 现在支持 `--db` / `--out` / `--no-verify-src`：原仓库归档后加 `--no-verify-src` 即可跳过逐字节比对。
 4. 核对报告「设计稿与基线数据的偏差」三节，仍需确认口径。
-5. 线上写接口没有录入界面，只能 `curl`。要更顺手可以做一个只读页面级的「快速记一场」表单，直连 `/api/sessions`（token 存在浏览器本地）。
+5. 线上写接口没有录入界面，现在用 `bin/mem`（见 [doc/cli.md](doc/cli.md)）。要更顺手可以做一个只读页面级的「快速记一场」表单，直连 `/api/sessions`（token 存在浏览器本地）。

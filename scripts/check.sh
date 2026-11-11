@@ -16,7 +16,7 @@ while IFS= read -r f; do
     printf '%s\n' "$err" | grep -v '^$' | head -3 | sed 's/^/    /'
     bad=$((bad + 1))
   fi
-done < <(ls -1 server/*.mjs web/render/*.mjs scripts/*.mjs 2>/dev/null || true)
+done < <(ls -1 server/*.mjs web/render/*.mjs scripts/*.mjs bin/mem 2>/dev/null || true)
 
 while IFS= read -r f; do
   [ -n "$f" ] || continue

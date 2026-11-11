@@ -88,7 +88,7 @@ export const SQL = {
   questionList: `
     SELECT q.id, q.paper_slug AS paperSlug, q.number, q.seq, q.type,
            q.topic_id AS topicId, q.topic, q.origin, q.answer, q.scorable,
-           q.notes, q.updated_at AS updatedAt
+           q.content_md, q.notes, q.updated_at AS updatedAt
     FROM questions q
     WHERE (?1 IS NULL OR q.paper_slug = ?1)
       AND (?2 IS NULL OR q.topic_id = ?2)
