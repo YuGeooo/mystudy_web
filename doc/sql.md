@@ -30,6 +30,17 @@ mem schema attempts            # 单表
 mem pull                       # 拉线上库覆到本机（先自动备份）
 ```
 
+想用系统 `sqlite3` 的 `.tables`、`.schema`、`EXPLAIN`，拉一份镜像后直接开：
+
+```bash
+mem pull
+sqlite3 "file:data/mem.db?immutable=1" "select count(*) from attempts"   # 纯只读
+sqlite3 data/mem.db                                                       # 交互式
+```
+
+> 别用 `sqlite3 -readonly data/mem.db`：库是 WAL 模式，这个开关会要求写 `-shm`，
+> 结果是 `unable to open database file (14)`。用 `immutable=1` 或干脆不加 `-readonly`（只跑 SELECT 不会改数据）。
+
 服务器上真正的执行文件是 `/www/api/server/sqlrun.mjs`，由 `deploy/deploy-api.sh` 一起发布；本机和服务器跑**同一份代码**，所以 `--local` 与线上行为一致。
 
 ## 3. 表结构速查
