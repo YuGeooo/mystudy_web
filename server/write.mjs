@@ -134,8 +134,7 @@ function nextSessionId(paperSlug) {
 }
 
 /** 场次文件路径：沿用「卷目录/answerN.md」的既有命名。 */
-function defaultSessionFile(paper, sessionId) {
-  const n = /-a(\d+)$/.exec(sessionId)?.[1] ?? '1';
+function defaultSessionFile(paper) {
   // 卷目录必须与渲染端的卷归属一致：parseSession 按 Markdown 顶层目录归卷，
   // 而卷清单来自注册试卷原文的顶层目录（build-site 的 config.volumes）。
   // 所以这里取注册原文的顶层目录，而不是 paper slug——slug 是 URL 标识，
@@ -144,7 +143,19 @@ function defaultSessionFile(paper, sessionId) {
   const { baseline } = unenvelope(paper.notes);
   const firstPaper = Object.keys(baseline.paperPrefix || {})[0];
   const dir = firstPaper ? firstPaper.split('/')[0] : paper.slug;
-  return `${dir}/answer${n}.md`;
+  // 编号取该卷目录下未被占用的最小 N。不能按场次 id 后缀取号：
+  // 同一卷目录下可能已有历史场次文件，且不同批次的 id 后缀会撞同一个编号。
+  const taken = new Set(
+    all(
+      "SELECT json_extract(note, '$.baseline.file') AS f FROM sessions" +
+      " WHERE json_extract(note, '$.baseline.file') LIKE ?",
+      `${dir}/answer%.md`
+    ).map((r) => r.f)
+  );
+  for (let n = 1; ; n += 1) {
+    const candidate = `${dir}/answer${n}.md`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 // ---------------------------------------------------------------- 正文拼装
@@ -286,7 +297,7 @@ export function createSession(input) {
 
   const file = input.file
     ? needString(input.file, 'file')
-    : defaultSessionFile(paper, sessionId);
+    : defaultSessionFile(paper);
   const startedAt = input.startedAt === undefined
     ? (durationMin !== null ? `${date}T00:00:00+08:00` : null)
     : (input.startedAt === null ? null : needString(input.startedAt, 'startedAt'));
