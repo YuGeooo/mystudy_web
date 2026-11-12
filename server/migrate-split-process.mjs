@@ -106,9 +106,9 @@ function buildPlan() {
         const pos = r.process_md.indexOf(FULLTEXT_MARK);
         if (pos < 0) continue; // 没有尾巴，无需修
         let body = r.process_md.slice(0, pos)
-          .replace(/^<!--\s*attempt:[^>]*-->\s*\n?/, '')
-          .replace(/^##\s+Q\s*\d+[^\n]*\n?/, '')
-          .replace(/\n?###\s+Answer[^\n]*$/, '')
+          .replace(/^<!--\s*attempt:[^>]*-->\s*\n?/gm, '') // 多轮修复可能叠了多层注释头
+          .replace(/^##\s+Q\s*\d+[^\n]*\n?/gm, '')
+          .replace(/^###\s+Answer[^\n]*\n?/gm, '')
           .trim();
         updates.push({
           attemptId: r.id, questionNumber: r.number,
