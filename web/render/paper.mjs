@@ -139,7 +139,10 @@ function splitSections(body) {
  * 一个紧凑列表（题目之间没有间距，卷内题号还会被列表标记吃掉）。统一成约定形状：
  *   1. 锚点独立成行：句中锚点前后补空行（削弱题的锚点写在题干中间）
  *   2. 行首裸题号转成 **N.**，前面补空行，与前后的题目拉开段落间距
- * 已是 **N.** 的行原样保留；代码块内不处理。
+ *   3. 4 空格以上的缩进压到 3 空格：「空行 + 4 空格」会被 Markdown 当成缩进
+ *      代码块（五大条件类推理题 28–30 题的选项就是这么变成代码块的）；
+ *      ≤3 空格会被剥掉，选项回到正常段落。全库没有需要保留缩进的代码块。
+ * 已是 **N.** 的行原样保留；代码块围栏内不处理。
  */
 function normalizeLayout(body) {
   return body
@@ -148,6 +151,7 @@ function normalizeLayout(body) {
       if (part.startsWith('```')) return part;
       const lines = part
         .replace(/[ \t]*<a id="([^"]+)"><\/a>/g, '\n\n<a id="$1"></a>\n\n')
+        .replace(/^ {4,}/gm, '   ')
         .replace(/\n{3,}/g, '\n\n')
         .split('\n');
       const out = [];
@@ -166,7 +170,8 @@ function normalizeLayout(body) {
 }
 
 /** 章节与题目锚点，按正文出现顺序。 */
-function scanStructure(body) {  const sections = [];
+function scanStructure(body) {
+  const sections = [];
   const questions = [];
   let current = null;
   for (const line of body.split('\n')) {
