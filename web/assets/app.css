@@ -39,3 +39,20 @@ a.paper-nav-title:hover{color:var(--color-ink);border-bottom-color:var(--color-l
 .paper-answer{display:inline-flex;align-items:center;min-width:3.4rem;height:1.9rem;padding-inline:.45rem;border:1px solid var(--color-line);font-size:.78rem;font-variant-numeric:tabular-nums;line-height:1}
 .paper-answer i{font-style:normal;color:var(--color-muted);font-size:.68rem;margin-right:.5rem}
 .paper-answer.is-none{color:var(--color-muted);border-style:dashed}
+/* 原文页「逐题作答」：全文块只是自动答案汇总时，用结构化作答数据渲染正文 */
+.session-attempts{margin-top:calc(var(--spacing) * 8)}
+.session-attempts-head{display:flex;justify-content:space-between;align-items:baseline;border-top:2px solid var(--color-line);border-bottom:1px solid var(--color-line);padding-block:calc(var(--spacing) * 2);color:var(--color-muted);font-size:.72rem;letter-spacing:.1em}
+.session-attempts-head b{color:var(--color-ink);font-size:.82rem;letter-spacing:.04em}
+.attempt-card{border-bottom:1px solid var(--color-line);padding-block:calc(var(--spacing) * 3)}
+.attempt-card:last-child{border-bottom:none}
+.attempt-card.is-bad .attempt-head{color:var(--color-ink)}
+.attempt-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:calc(var(--spacing) * 2);font-size:.85rem}
+.attempt-no{font-weight:600}
+.attempt-no a{color:inherit;text-decoration:none;border-bottom:1px solid var(--color-line)}
+.attempt-no a:hover{border-bottom-color:var(--color-ink)}
+.attempt-verdict{font-size:.8rem}
+.attempt-verdict.unset{color:var(--color-muted)}
+.attempt-answers{display:flex;gap:calc(var(--spacing) * 3);color:var(--color-muted);font-size:.76rem;margin-left:auto}
+.attempt-process{margin-top:calc(var(--spacing) * 2);font-size:.85rem;line-height:1.85}
+.attempt-process>:first-child{margin-top:0}
+.attempt-process>:last-child{margin-bottom:0}

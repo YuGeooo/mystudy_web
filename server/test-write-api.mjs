@@ -148,8 +148,12 @@ try {
   const baseMeta = (await api('GET', '/api/meta', undefined, { token: null })).body;
   const baseSessions = baseMeta.coverage.sessions;
   const baseAttempts = baseMeta.coverage.attempts;
+  const basePapers = baseMeta.coverage.papers;
+  const baseQuestions = baseMeta.coverage.questions;
   const baseCorrect = baseMeta.verdict.correct;
-  console.log(`  基线：sessions=${baseSessions} attempts=${baseAttempts} correct=${baseCorrect}`);
+  console.log(
+    `  基线：papers=${basePapers} questions=${baseQuestions} sessions=${baseSessions} attempts=${baseAttempts} correct=${baseCorrect}`
+  );
 
   // ---- 鉴权 ----
   console.log('\n=== 2. 鉴权 ===');
@@ -188,7 +192,9 @@ try {
   // ---- 取题目上下文 ----
   console.log('\n=== 3. 录入前上下文 ===');
   const papers = await api('GET', '/api/papers', undefined, { token: null });
-  check('GET /api/papers 返回 7 卷', () => assert.equal(papers.body.papers.length, 7));
+  check('GET /api/papers 返回全部卷（与基线一致）', () =>
+    assert.equal(papers.body.papers.length, basePapers)
+  );
 
   const q1 = (await api('GET', '/api/questions/2024-exam-q001', undefined, { token: null })).body;
   const q2 = (await api('GET', '/api/questions/2024-exam-q002', undefined, { token: null })).body;
@@ -709,7 +715,7 @@ try {
   check('快照可打开且完整性检查通过', () => assert.equal(backupCheck.trim(), 'ok'));
 
   const afterLib = (await api('GET', '/api/meta', undefined, { token: null })).body;
-  check('题库用例跑完题目数回到基线', () => assert.equal(afterLib.coverage.questions, 328));
+  check('题库用例跑完题目数回到基线', () => assert.equal(afterLib.coverage.questions, baseQuestions));
 
   // ---- 导出联动 ----
   console.log('\n=== 10. 写后页面即时可见 ===');

@@ -33,7 +33,7 @@ const A_FIELDS = [
 ];
 
 const TIMING_MODES = ['session', 'per-question', 'mixed', 'none'];
-const FULLTEXT_MARK = '===== 场次全文：';
+export const FULLTEXT_MARK = '===== 场次全文：';
 
 function unenvelope(raw) {
   if (!raw) return { text: null, baseline: {} };

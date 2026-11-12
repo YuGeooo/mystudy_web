@@ -1,9 +1,31 @@
-// P1 + P2 验收：黑盒验证 API 端点、站点页面与 §8 基线口径一致。
+// P1 + P2 验收：黑盒验证 API 端点、站点页面，口径以 data/mem.db 为准（动态推导，不硬编码行数）。
 // 用法：node server/smoke-test.mjs [BASE_URL]
 import assert from 'node:assert/strict';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BASE = process.argv[2] || process.env.BASE_URL || 'http://127.0.0.1:8137';
 const results = [];
+
+// 口径基准：直接只读本地库。测试断言全部从这份快照推导，数据正常增长不会让冒烟变红。
+const db = new DatabaseSync(path.join(ROOT, 'data', 'mem.db'), { readOnly: true });
+const dbCount = (sql) => db.prepare(sql).get().n;
+const dbCounts = {
+  papers: dbCount('SELECT COUNT(*) AS n FROM papers'),
+  questions: dbCount('SELECT COUNT(*) AS n FROM questions'),
+  sessions: dbCount('SELECT COUNT(*) AS n FROM sessions'),
+  attempts: dbCount('SELECT COUNT(*) AS n FROM attempts'),
+  redoRows: dbCount('SELECT COUNT(*) AS n FROM attempts WHERE redo_status IS NOT NULL'),
+};
+const dbVerdict = {
+  correct: dbCount('SELECT COUNT(*) AS n FROM attempts WHERE correct = 1'),
+  wrong: dbCount('SELECT COUNT(*) AS n FROM attempts WHERE correct = 0'),
+  unjudged: dbCount('SELECT COUNT(*) AS n FROM attempts WHERE correct IS NULL'),
+  substantiveCorrect: dbCount('SELECT COUNT(*) AS n FROM attempts WHERE substantive_correct = 1'),
+  isRedo: dbCount('SELECT COUNT(*) AS n FROM attempts WHERE is_redo = 1'),
+};
 
 function check(name, fn) {
   try {
@@ -47,27 +69,22 @@ check('服务可达且只读', () => {
   assert.equal(health.body.readOnly, true);
 });
 
-check('4 表行数 7 / 328 / 40 / 317，台账 12', () => {
-  assert.deepEqual(meta.body.coverage, {
-    papers: 7, questions: 328, sessions: 40, attempts: 317, redoRows: 12,
-  });
+check('4 表行数与库一致', () => {
+  assert.deepEqual(meta.body.coverage, dbCounts);
 });
 
-check('判定 217 / 89 / 11，实质 218，重做 25', () => {
-  assert.deepEqual(meta.body.verdict, {
-    correct: 217, wrong: 89, unjudged: 11, substantiveCorrect: 218, isRedo: 25,
-  });
+check('判定口径与库一致', () => {
+  assert.deepEqual(meta.body.verdict, dbVerdict);
 });
 
-check('答案状态 321 / 7', () => {
-  assert.deepEqual(meta.body.answers, { confirmed: 321, estimated: 7 });
+check('答案状态合计等于题数', () => {
+  assert.equal(meta.body.answers.confirmed + meta.body.answers.estimated, dbCounts.questions);
 });
 
-check('计时 23 / 0 / 1 / 16，未记时长 16 场', () => {
-  assert.deepEqual(meta.body.timing, {
-    session: 23, 'per-question': 0, mixed: 1, none: 16,
-  });
-  assert.equal(meta.body.durationUnknownSessions, 16);
+check('计时口径合计等于场次数', () => {
+  const sum = Object.values(meta.body.timing).reduce((a, b) => a + b, 0);
+  assert.equal(sum, dbCounts.sessions);
+  assert.ok(meta.body.durationUnknownSessions <= dbCounts.sessions);
 });
 
 check('外键与题数自检全零', () => {
@@ -75,27 +92,27 @@ check('外键与题数自检全零', () => {
   assert.ok(Object.values(meta.body.integrity).every((v) => v === 0));
 });
 
-check('7 卷元数据齐全', () => {
-  assert.equal(meta.body.volumes.length, 7);
+check('卷元数据齐全', () => {
+  assert.equal(meta.body.volumes.length, dbCounts.papers);
   assert.ok(meta.body.volumes.every((v) => v.questionCount === v.actualQuestions));
 });
 
-check('学习日 24 天，场次 40，作答 317', () => {
-  assert.equal(days.body.summary.learningDays, 24);
-  assert.equal(days.body.summary.sessions, 40);
-  assert.equal(days.body.summary.attempts, 317);
+check('学习日 / 场次 / 作答与库一致', () => {
+  assert.equal(days.body.summary.learningDays, days.body.days.length);
+  assert.equal(days.body.summary.sessions, dbCounts.sessions);
+  assert.equal(days.body.summary.attempts, dbCounts.attempts);
 });
 
 check('日历逐题判定合计与 attempts 表一致', () => {
   const s = days.body.summary;
-  assert.equal(s.correct, 217);
-  assert.equal(s.wrong, 89);
-  assert.equal(s.unjudged, 11);
+  assert.equal(s.correct, dbVerdict.correct);
+  assert.equal(s.wrong, dbVerdict.wrong);
+  assert.equal(s.unjudged, dbVerdict.unjudged);
   assert.equal(s.correct + s.wrong + s.unjudged, s.attempts);
 });
 
 check('days[] 形状兼容现有渲染器（commits 恒空）', () => {
-  assert.equal(days.body.days.length, 24);
+  assert.equal(days.body.days.length, days.body.summary.learningDays);
   assert.ok(days.body.days.every((d) => Array.isArray(d.commits) && d.commits.length === 0));
   assert.ok(days.body.days.every((d) => d.totals.commits === 0 && d.hasCommits === false));
   assert.ok(days.body.days.every((d) => d.weekday && d.sessions.length > 0));
@@ -124,6 +141,9 @@ const css = await fetch(BASE + '/study/assets/app.css');
 const siteData = await json('/study/data.json');
 const buildReport = await json('/study/build-report.json');
 const sourcePage = await page(encodeURI('/study/source/2025年英语二/answer1/'));
+const apiSessionPage = await page(
+  encodeURI('/study/source/专项训练二-五大条件类推理题/answer2/answer2-5/')
+);
 const paperPage = await page('/study/papers/2024-exam/');
 const paperNoSlash = await fetch(BASE + '/study/papers/2024-exam');
 const katexCss = await fetch(BASE + '/study/assets/katex/katex.min.css');
@@ -147,6 +167,16 @@ check('样式与原文页可访问', () => {
   assert.equal(css.status, 200);
   assert.equal(sourcePage.status, 200);
   assert.match(sourcePage.text, /<html/);
+});
+
+check('原文页：全文块是自动答案汇总时，改用逐题作答区块渲染', () => {
+  assert.equal(apiSessionPage.status, 200);
+  assert.match(apiSessionPage.text, /session-attempts-head/); // 结构化区块
+  assert.match(apiSessionPage.text, /11 题 · 对 11/); // 场次统计来自库
+  assert.match(apiSessionPage.text, /甲乙丙丁/); // 批改推演正文在页面里
+  assert.match(apiSessionPage.text, /papers\/reasoning-2\/#reasoning-2-q20/); // 题号链到试卷锚点
+  assert.doesNotMatch(apiSessionPage.text, /通过 API 录入/); // 答案汇总块不再渲染
+  assert.equal(apiSessionPage.text.match(/我的答案/g).length, 11); // 无重复
 });
 
 check('试卷页：锚点与公式都在，KaTeX 样式可访问', () => {
@@ -182,18 +212,18 @@ check('试卷列表页的每张卡片点进去都是 200（防止相对路径少
 
 check('站点 data.json 与数据库口径一致', () => {
   assert.equal(siteData.status, 200);
-  assert.equal(siteData.body.days.length, 24);
-  assert.equal(siteData.body.volumes.length, 7);
+  assert.equal(siteData.body.days.length, days.body.summary.learningDays);
+  assert.equal(siteData.body.volumes.length, meta.body.volumes.length);
   assert.equal(siteData.body.warnings.length, 0);
   assert.equal(siteData.body.meta.today, meta.body.today);
   assert.equal(siteData.body.meta.firstDay, days.body.summary.firstDay);
 });
 
-check('构建报告：40 场、0 提交、0 警告', () => {
-  assert.equal(buildReport.body.counts.sessions, 40);
+check('构建报告：场次 / 作答与库一致，无提交无警告', () => {
+  assert.equal(buildReport.body.counts.sessions, dbCounts.sessions);
   assert.equal(buildReport.body.counts.commits, 0);
   assert.equal(buildReport.body.warnings.length, 0);
-  assert.equal(buildReport.body.jsonIndex.attempts, 317);
+  assert.equal(buildReport.body.jsonIndex.attempts, dbCounts.attempts);
 });
 
 check('目录穿越被拦截', () => {

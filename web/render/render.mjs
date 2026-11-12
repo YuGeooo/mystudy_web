@@ -831,14 +831,79 @@ function sourceHref(session, root = '') {
   return `${root}source/${encoded}/`;
 }
 
-function renderSource({ source, data, config }) {
-  const { session, content } = source;
+/**
+ * 全文块是否只是「按逐题结果自动生成的答案汇总」——API 录入没传 fullText 时
+ * 自动生成的就是这种形态（标题 + 录入说明 + 逐题两行答案，没有任何正文）。
+ * 这种全文块没有信息量（逐题作答区块会完整覆盖它），页面上跳过不渲染。
+ */
+function isAnswerSummaryOnly(body) {
+  const rest = body.split('\n').filter((line) => {
+    const t = line.trim();
+    if (!t) return false;
+    if (/^#{1,6}\s/.test(t)) return false; // 标题
+    if (/^>/.test(t)) return false; // 引用（录入说明）
+    if (/^(?:---|\*\*\*|___)\s*$/.test(t)) return false; // 分隔线
+    if (/^[-*]\s*(?:我的答案|正确答案|得分)/.test(t)) return false; // 答案行
+    return true;
+  });
+  return rest.join('\n').trim().length < 40;
+}
+
+function renderSource({ source, data, config, papers = [] }) {
+  const { session, content, attempts = [] } = source;
   const relDir = sourceRel(session);
   const root = '../'.repeat(relDir.split('/').filter(Boolean).length);
   const dayHref = `${root}day/${session.date}/`;
   const { body } = splitFrontMatter(content);
-  const html = marked.parse(body, { gfm: true, breaks: false });
+  const summaryOnly = isAnswerSummaryOnly(body);
+  const html = summaryOnly ? '' : marked.parse(body, { gfm: true, breaks: false });
   const when = `${session.date}${session.time ? ` ${session.time}` : ''}`;
+
+  // 逐题作答（结构化，来自库）：全文块只是答案汇总时，这一段就是页面的正文
+  const okN = attempts.filter((a) => a.correct === true).length;
+  const badN = attempts.filter((a) => a.correct === false).length;
+  const unsetN = attempts.length - okN - badN;
+  const paperByQuestion = new Map();
+  for (const paper of papers) {
+    for (const q of paper.questions) paperByQuestion.set(q.id, paper.slug);
+  }
+  const attemptsHtml =
+    summaryOnly && attempts.length
+      ? `<section class="session-attempts">
+  <p class="session-attempts-head"><b>逐题作答</b><span>${e(
+    `${attempts.length} 题 · 对 ${okN}${badN ? ` · 错 ${badN}` : ''}${
+      unsetN ? ` · 未判定 ${unsetN}` : ''
+    }`
+  )}</span></p>
+  ${attempts
+    .map((a) => {
+      const slug = paperByQuestion.get(a.questionId);
+      const label = slug
+        ? `<a href="${root}papers/${slug}/#${a.questionId}">${e(a.label)}</a>`
+        : e(a.label);
+      const verdict =
+        a.correct === true
+          ? '<span class="attempt-verdict ok">✅</span>'
+          : a.correct === false
+            ? '<span class="attempt-verdict bad">❌</span>'
+            : '<span class="attempt-verdict unset">未判定</span>';
+      const answers = [
+        a.userAnswer ? `我的答案 ${a.userAnswer}` : null,
+        a.correctAnswer ? `正确答案 ${a.correctAnswer}` : null,
+        a.score != null ? `${a.score}${a.scoreMax != null ? ` / ${a.scoreMax}` : ''} 分` : null,
+      ]
+        .filter(Boolean)
+        .map((t) => `<span>${e(t)}</span>`)
+        .join('');
+      const proc = a.process ? marked.parse(a.process, { gfm: true, breaks: false }) : '';
+      return `<div class="attempt-card${a.correct === false ? ' is-bad' : ''}">
+  <p class="attempt-head"><span class="attempt-no">${label}</span>${verdict}<span class="attempt-answers">${answers}</span></p>
+  ${proc ? `<div class="attempt-process">${proc}</div>` : ''}
+</div>`;
+    })
+    .join('\n')}
+</section>`
+      : '';
 
   const bodyHtml = `<p class="back"><a href="${dayHref}">← ${e(session.date)}</a></p>
 
@@ -848,7 +913,8 @@ function renderSource({ source, data, config }) {
   <p class="standfirst">${e(`${when} · ${session.volume} · ${session.batch}`)}</p>
   <p class="source-raw"><a href="raw.txt">原始 Markdown ↗</a> · <a href="raw.md" download>下载 .md</a></p>
   ${html}
-</article>`;
+</article>
+${attemptsHtml}`;
 
   return layout({
     config,
@@ -1559,7 +1625,7 @@ export function renderSite({ data, config, report, outDir, sources = [], papers 
   if (config.publish?.fullText) {
     for (const source of sources) {
       const relDir = sourceRel(source.session);
-      write(`${relDir}/index.html`, renderSource({ source, data, config }));
+      write(`${relDir}/index.html`, renderSource({ source, data, config, papers }));
       write(`${relDir}/raw.md`, source.content);
       write(`${relDir}/raw.txt`, source.content);
     }

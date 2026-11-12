@@ -14,9 +14,10 @@ import { isSessionPath, parseSession } from '../web/render/parse.mjs';
 import { buildData } from '../web/render/aggregate.mjs';
 import { buildPaper } from '../web/render/paper.mjs';
 import { renderSite } from '../web/render/render.mjs';
-import { buildIndex, buildContent } from './export.mjs';
+import { buildIndex, buildContent, FULLTEXT_MARK } from './export.mjs';
 import { loadVolumes } from './registry.mjs';
 import { all } from './db.mjs';
+import { unenvelope } from './write.mjs';
 import appConfig from './config.mjs';
 import { todayLocal } from './dates.mjs';
 
@@ -42,6 +43,56 @@ function countBy(items, keyFn) {
 // 而写接口通常只改作答与判定、试卷正文不动，所以原文没变就直接复用上次的 HTML，
 // 写库后的页表重建不会因为试卷页变慢。
 const paperCache = new Map();
+
+/**
+ * 逐题批改正文：去掉 attempt 注释头、题号/答案小标题（卡片头已带判定与答案，
+ * 重复显示）与「场次全文」尾部（那是组装文档，结构化数据里不要重复）。
+ */
+function stripFulltext(md, file) {
+  if (!md) return '';
+  let s = md
+    .replace(/^<!--\s*attempt:[^>]*-->\s*\n?/gm, '')
+    .replace(/^#{1,6}\s+(?:Q\s*\d+|Answer\b)[^\n]*\n?/gm, '');
+  const marker = `${FULLTEXT_MARK}${file} =====`;
+  const pos = s.indexOf(marker);
+  if (pos >= 0) s = s.slice(0, pos);
+  return s.trim();
+}
+
+/**
+ * 场次 → 结构化作答（题目、我的作答、正确答案、判定、批改正文）。
+ * 库是唯一数据源；content.sessions 的全文块是「给人读的组装文档」，API 录入
+ * 若没传 fullText 只会自动生成答案汇总表，页面渲染要用这份结构化数据兜底。
+ */
+function buildAttemptsByFile() {
+  const sessionFileById = new Map();
+  for (const r of all('SELECT id, note FROM sessions')) {
+    const { baseline } = unenvelope(r.note);
+    if (baseline?.file) sessionFileById.set(r.id, baseline.file);
+  }
+  const byFile = new Map();
+  for (const r of all(`
+    SELECT a.session_id, a.question_id, a.user_answer, a.correct, a.score, a.score_max,
+           a.process_md, q.answer AS correct_answer, q.number
+    FROM attempts a JOIN questions q ON q.id = a.question_id
+    ORDER BY a.session_id, a.rowid
+  `)) {
+    const file = sessionFileById.get(r.session_id);
+    if (!file) continue;
+    if (!byFile.has(file)) byFile.set(file, []);
+    byFile.get(file).push({
+      questionId: r.question_id,
+      label: String(r.number ?? ''),
+      userAnswer: r.user_answer,
+      correctAnswer: r.correct_answer,
+      correct: r.correct == null ? null : Boolean(r.correct),
+      score: r.score,
+      scoreMax: r.score_max,
+      process: stripFulltext(r.process_md, file),
+    });
+  }
+  return byFile;
+}
 
 /**
  * 试卷：papers 表（卷注册）决定顺序与归属，content.json 提供原文。
@@ -121,6 +172,7 @@ export function prepare(paths = {}) {
   );
 
   const warnings = [];
+  const attemptsByFile = buildAttemptsByFile();
   const { papers, missing: missingPapers } = buildPapers(content, volumes);
   for (const paperPath of missingPapers) warnings.push(`试卷未能上线（原文缺失或未登记卷）：${paperPath}`);
   const sessions = [];
@@ -138,7 +190,7 @@ export function prepare(paths = {}) {
     warnings.push(...sw);
     if (session) {
       sessions.push(session);
-      sources.push({ session, content: text });
+      sources.push({ session, content: text, attempts: attemptsByFile.get(filePath) || [] });
     }
   }
 
