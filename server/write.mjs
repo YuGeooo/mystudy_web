@@ -134,9 +134,17 @@ function nextSessionId(paperSlug) {
 }
 
 /** 场次文件路径：沿用「卷目录/answerN.md」的既有命名。 */
-function defaultSessionFile(paperSlug, sessionId) {
+function defaultSessionFile(paper, sessionId) {
   const n = /-a(\d+)$/.exec(sessionId)?.[1] ?? '1';
-  return `${paperSlug}/answer${n}.md`;
+  // 卷目录必须与渲染端的卷归属一致：parseSession 按 Markdown 顶层目录归卷，
+  // 而卷清单来自注册试卷原文的顶层目录（build-site 的 config.volumes）。
+  // 所以这里取注册原文的顶层目录，而不是 paper slug——slug 是 URL 标识，
+  // 拿它当目录会生成渲染端不认识的「新卷」（subject 推断为其他、总题数丢失）。
+  // 未登记原文的卷才兜底用 slug。
+  const { baseline } = unenvelope(paper.notes);
+  const firstPaper = Object.keys(baseline.paperPrefix || {})[0];
+  const dir = firstPaper ? firstPaper.split('/')[0] : paper.slug;
+  return `${dir}/answer${n}.md`;
 }
 
 // ---------------------------------------------------------------- 正文拼装
@@ -278,7 +286,7 @@ export function createSession(input) {
 
   const file = input.file
     ? needString(input.file, 'file')
-    : defaultSessionFile(paperSlug, sessionId);
+    : defaultSessionFile(paper, sessionId);
   const startedAt = input.startedAt === undefined
     ? (durationMin !== null ? `${date}T00:00:00+08:00` : null)
     : (input.startedAt === null ? null : needString(input.startedAt, 'startedAt'));

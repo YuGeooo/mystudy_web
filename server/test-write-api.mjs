@@ -253,8 +253,8 @@ try {
     assert.equal(a.correct, true);
     assert.equal(a.substantiveCorrect, false);
   });
-  check('场次文件路径使用卷目录约定', () => {
-    assert.match(detail.file, /^2024-exam\/answer\d+\.md$/);
+  check('场次文件路径使用卷目录约定（注册原文顶层目录，而非 slug）', () => {
+    assert.match(detail.file, /^2024年管综真题\/answer\d+\.md$/);
   });
 
   const withProcess = (await api('GET', `/api/sessions/${sessionId}?include=process`, undefined, { token: null })).body;
