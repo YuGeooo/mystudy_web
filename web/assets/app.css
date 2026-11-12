@@ -28,3 +28,14 @@ a.paper-nav-title:hover{color:var(--color-ink);border-bottom-color:var(--color-l
   .paper-nav-title{flex:none}
   .paper-chip{min-width:1.7rem;height:1.7rem}
 }
+/* 答案速查：默认收起的 <details>，点开显示题号→答案格子 */
+.paper-answers{margin-top:calc(var(--spacing) * 6);border:1px solid var(--color-line);background:var(--color-paper);padding-block:calc(var(--spacing) * 2);padding-inline:calc(var(--spacing) * 3)}
+.paper-answers summary{cursor:pointer;color:var(--color-ink);font-size:.82rem;font-weight:600;letter-spacing:.04em;list-style:none;display:flex;align-items:baseline;gap:calc(var(--spacing) * 2)}
+.paper-answers summary::before{content:'▸';color:var(--color-muted);font-size:.75rem;transition:transform .15s ease}
+.paper-answers[open] summary::before{transform:rotate(90deg)}
+.paper-answers summary::-webkit-details-marker{display:none}
+.paper-answers-meta{color:var(--color-muted);font-weight:400;font-size:.7rem;letter-spacing:.06em}
+.paper-answers-grid{display:flex;flex-wrap:wrap;gap:4px;margin-top:calc(var(--spacing) * 3)}
+.paper-answer{display:inline-flex;align-items:center;min-width:3.4rem;height:1.9rem;padding-inline:.45rem;border:1px solid var(--color-line);font-size:.78rem;font-variant-numeric:tabular-nums;line-height:1}
+.paper-answer i{font-style:normal;color:var(--color-muted);font-size:.68rem;margin-right:.5rem}
+.paper-answer.is-none{color:var(--color-muted);border-style:dashed}

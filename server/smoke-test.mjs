@@ -158,6 +158,13 @@ check('试卷页：锚点与公式都在，KaTeX 样式可访问', () => {
   assert.match(katexCss.headers.get('content-type') || '', /text\/css/);
 });
 
+check('试卷页答案速查：默认收起，展开后有答案格子', () => {
+  assert.match(paperPage.text, /<details class="paper-answers">/); // 没有 open 属性 = 默认收起
+  assert.doesNotMatch(paperPage.text, /<details class="paper-answers" open/);
+  assert.match(paperPage.text, /paper-answers-meta">55 \/ 57/); // 55 客观题 + 2 作文
+  assert.match(paperPage.text, /<i>1<\/i>E</); // 第 1 题答案与库一致
+});
+
 check('目录页不带尾斜杠也能访问（客户端会吃掉斜杠）', () => {
   assert.equal(paperNoSlash.status, 200);
   assert.match(paperNoSlash.headers.get('content-type') || '', /text\/html/);

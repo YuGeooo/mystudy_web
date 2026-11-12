@@ -16,6 +16,7 @@ import { buildPaper } from '../web/render/paper.mjs';
 import { renderSite } from '../web/render/render.mjs';
 import { buildIndex, buildContent } from './export.mjs';
 import { loadVolumes } from './registry.mjs';
+import { all } from './db.mjs';
 import appConfig from './config.mjs';
 import { todayLocal } from './dates.mjs';
 
@@ -50,6 +51,11 @@ const paperCache = new Map();
 function buildPapers(content, volumes) {
   const papers = [];
   const missing = [];
+  // 页底「答案速查」用：标准答案在 questions.answer，按题 id 对上试卷页锚点。
+  // 主观题（作文/翻译）answer 为 NULL，速查表里显示 —。
+  const answersById = new Map(
+    all('SELECT id, answer FROM questions WHERE answer IS NOT NULL').map((r) => [r.id, r.answer])
+  );
   for (const volume of volumes) {
     const paths = (volume.papers || []).filter((p) => content.papers[p] != null);
     for (const p of volume.papers || []) {
@@ -62,6 +68,8 @@ function buildPapers(content, volumes) {
       if (!cached || cached.md !== md) paperCache.set(paperPath, { md, paper });
       papers.push({
         ...paper,
+        // 答案不进 paperCache：改答案只动 questions.answer，正文没变也要跟着更新
+        answers: paper.questions.map((q) => ({ label: q.label, answer: answersById.get(q.id) || null })),
         slug: paths.length > 1 ? `${volume.slug}-${index + 1}` : volume.slug,
         volumeSlug: volume.slug,
         volumeName: volume.name,

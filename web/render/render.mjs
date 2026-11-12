@@ -1178,6 +1178,26 @@ function renderPaper({ paper, data, config }) {
     ? `<p class="paper-note">原文中「${e(paper.dropped)}」一节是答案附录，为避免剧透已略去。</p>`
     : '';
 
+  // 答案速查：原生 <details>，默认收起，点开才显示——不用 JS，也不会被截图/打印误带出去
+  const answered = (paper.answers || []).filter((a) => a.answer);
+  const answersBlock = answered.length
+    ? `<details class="paper-answers">
+  <summary>答案速查<span class="paper-answers-meta">${e(
+    `${answered.length} / ${total} 题有标准答案`
+  )}</span></summary>
+  <div class="paper-answers-grid">
+    ${paper.answers
+      .map(
+        (a) =>
+          `<span class="paper-answer${a.answer ? '' : ' is-none'}"><i>${e(a.label)}</i>${e(
+            a.answer || '—'
+          )}</span>`
+      )
+      .join('\n    ')}
+  </div>
+</details>`
+    : '';
+
   const body = `<p class="back"><a href="../">← 全部试卷</a></p>
 
 <section class="day-hero">
@@ -1196,7 +1216,8 @@ ${paper.html}
 </article>
 
 ${dropped}
-<p class="paper-foot">本页只有题干与选项；答案、你的作答与批改记录不在试卷页里。</p>
+${answersBlock}
+<p class="paper-foot">本页只有题干与选项；你的作答与批改记录不在试卷页里。答案在页底「答案速查」，默认收起，点开才显示。</p>
 <p class="source-raw"><a href="raw.txt">原始 Markdown ↗</a> · <a href="raw.md" download>下载 .md</a></p>`;
 
   return layout({
