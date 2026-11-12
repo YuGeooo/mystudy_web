@@ -474,10 +474,17 @@ export function patchAttempt(attemptId, patch) {
         fullText: null,
         file: '',
       });
-      // 改的是单题段落，整份场次正文要保住（在第一条 attempt 上）
-      const keepFull = row.process_md.includes('===== 场次全文：')
-        ? row.process_md.slice(row.process_md.indexOf('===== 场次全文：'))
-        : null;
+      // 场次全文只保留在场次第一条作答上（content.json 从首条取标记段）。
+      // 其它条上若还挂着全文拷贝（迁移期遗留），就地清除——否则每次单题编辑
+      // 都会把整卷文档再接回去，永远去不了重。
+      const firstId = get(
+        'SELECT id FROM attempts WHERE session_id = ? ORDER BY rowid LIMIT 1',
+        row.session_id
+      ).id;
+      const keepFull =
+        firstId === attemptId && row.process_md.includes('===== 场次全文：')
+          ? row.process_md.slice(row.process_md.indexOf('===== 场次全文：'))
+          : null;
       sets.push('process_md = ?');
       params.push(keepFull ? `${nextMd}\n\n${keepFull}` : nextMd);
     }
